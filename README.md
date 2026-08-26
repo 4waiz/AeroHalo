@@ -300,12 +300,25 @@ it, so the software side of the intervention is wired today.
 | `aircraft.glb` | Supplied (Sketchfab) | F/A-18E Super Hornet, 4.3k tris. Placement measured from its own vertex cloud |
 | `airliner.glb` | Authored in Blender | Generic A320-class narrow-body, 35k tris, no branding |
 | `gse.glb` | Authored in Blender | 13 ground-support objects, 13k tris total |
-| `worker_blue.glb`, `worker_hivis.glb` | Supplied (Sketchfab) | Photogrammetry crew scans, normalised at load |
+| `worker_blue.glb`, `worker_hivis.glb` | Supplied (Sketchfab) | Photogrammetry crew scans, decimated to ~15k tris and ~1 MB each |
 
 The apron itself — concrete, markings, terminal, floodlight masts, staging props — is
 procedural Three.js geometry. The concrete surface (aggregate speckle, pour variation,
 rubber and oil staining, plus a derived normal map) is generated into a canvas at runtime,
 so no texture files ship and there is nothing to 404.
+
+**Optimising the crew scans.** The two supplied scans arrive at ~300k triangles and
+~29 MB each, with 2048px textures and `metallic = 1` (which renders them black in a
+real-time PBR scene). `scripts/optimize-models.mjs` decimates them with meshoptimizer,
+resizes the textures to 1024px JPEG and fixes the material, taking the pair from 58 MB to
+2 MB with no visible difference at apron viewing distance:
+
+```bash
+npm run optimize:models
+```
+
+It reads from `raw_models/` (not committed) and writes to `public/models/`. On a fresh
+clone there is nothing to do — the optimised output is already checked in.
 
 **Airframe switching.** Use the aircraft selector on the monitoring control bar. Switching
 rebuilds the entire stand: zones, service routes, sensor ring positions, camera distances
