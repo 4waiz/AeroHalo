@@ -100,10 +100,18 @@ const emptyRig = (): Rig => ({
 const CREW_HEIGHT = 1.8;
 
 /**
- * Photogrammetry scans arrive centred on their own origin, at whatever scale
- * the capture happened to be, and with metallic = 1 (which renders them
- * black under real lighting). This normalises one into the app's contract:
- * 1.8 m tall, feet on y = 0, centred in plan, facing -Z, matte.
+ * Places one scanned figure into the app's contract: 1.8 m tall, feet on
+ * y = 0, centred in plan, facing -Z.
+ *
+ * Materials are taken as authored. Scans come off Sketchfab at metallic = 1,
+ * which renders as a black silhouette under real lighting, but that is
+ * corrected once in scripts/optimize-models.mjs and baked into the GLBs rather
+ * than re-applied on every load — so a scan dropped straight into
+ * public/models without going through `npm run optimize:models` will look
+ * wrong, by design.
+ *
+ * Leaving materials alone also means every clone shares one instance instead
+ * of carrying its own copy.
  */
 function normaliseCrew(src: THREE.Object3D): THREE.Group {
   const holder = new THREE.Group();
@@ -112,24 +120,11 @@ function normaliseCrew(src: THREE.Object3D): THREE.Group {
   body.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
-    // Scans carry ~300k triangles each; keeping them out of the shadow pass
-    // halves their vertex cost. The contact patch already grounds them.
+    // Even decimated, the crew are the densest meshes on the stand; keeping
+    // them out of the shadow pass halves their vertex cost, and the contact
+    // patch already grounds them.
     m.castShadow = false;
     m.receiveShadow = false;
-    const fix = (mat: THREE.Material): THREE.Material => {
-      const c = (mat as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
-      // Scans export at metalness 1, which renders as a black silhouette
-      // without an environment map. Clothing is dielectric and matte.
-      c.metalness = 0;
-      c.roughness = 0.78;
-      c.envMapIntensity = 0.6;
-      c.side = THREE.FrontSide;
-      c.needsUpdate = true;
-      return c;
-    };
-    m.material = Array.isArray(m.material)
-      ? m.material.map(fix)
-      : fix(m.material);
   });
 
   body.updateMatrixWorld(true);
