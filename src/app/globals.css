@@ -1,0 +1,377 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #030b14;
+  --color-bg-deep: #020810;
+  --color-panel: #071626;
+  --color-panel-2: #061321;
+  --color-panel-3: #0a1e31;
+  --color-panel-hi: #0d2337;
+  --color-line: #123147;
+  --color-line-hi: #17435d;
+  --color-line-soft: #0e2537;
+
+  --color-blue: #19a7ff;
+  --color-cyan: #25d9e8;
+  --color-green: #31d17c;
+  --color-amber: #f5a623;
+  --color-orange: #ff8b1f;
+  --color-red: #ff4343;
+
+  --color-ink: #f3f7fa;
+  --color-dim: #8fa7b8;
+  --color-dimmer: #5f7d94;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: var(--font-mono-tech), ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root {
+  --hdr-h: 78px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "tnum";
+  overflow: hidden;
+}
+
+/* ---------- Scrollbars: thin, telemetry style ---------- */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #1b4763 transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #1b4763;
+  border-radius: 3px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: #23617f;
+}
+
+/* ---------- Panel primitives ---------- */
+.panel {
+  background:
+    linear-gradient(180deg, rgba(20, 52, 78, 0.16) 0%, rgba(6, 18, 31, 0) 42%),
+    var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  position: relative;
+}
+
+.panel-flat {
+  background: var(--color-panel-2);
+  border: 1px solid var(--color-line);
+  border-radius: 5px;
+}
+
+.panel-label {
+  font-size: 10.5px;
+  line-height: 1;
+  letter-spacing: 0.085em;
+  text-transform: uppercase;
+  color: #93aec2;
+  font-weight: 600;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ---------- Live dot pulse ---------- */
+@keyframes halo-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(49, 209, 124, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(49, 209, 124, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(49, 209, 124, 0);
+  }
+}
+.live-dot {
+  animation: halo-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes halo-pulse-red {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 67, 67, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(255, 67, 67, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 67, 67, 0);
+  }
+}
+.crit-dot {
+  animation: halo-pulse-red 1.15s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ---------- Critical screen edge alarm ---------- */
+@keyframes alarm-edge {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.alarm-edge {
+  animation: alarm-edge 1.05s ease-in-out infinite;
+}
+
+/* ---------- Scanline shimmer on the monitoring feed ---------- */
+@keyframes feed-scan {
+  0% {
+    transform: translateY(-8%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.5;
+  }
+  92% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(108%);
+    opacity: 0;
+  }
+}
+.feed-scan {
+  animation: feed-scan 7.5s linear infinite;
+}
+
+/* ---------- AI detection box ---------- */
+@keyframes box-lock {
+  from {
+    opacity: 0;
+    transform: scale(1.22);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.det-box {
+  animation: box-lock 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---------- utility ---------- */
+.no-drag {
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.hair-t {
+  border-top: 1px solid rgba(18, 49, 71, 0.85);
+}
+.hair-b {
+  border-bottom: 1px solid rgba(18, 49, 71, 0.85);
+}
+
+.row-hover {
+  transition: background-color 130ms ease;
+}
+.row-hover:hover {
+  background-color: rgba(23, 67, 93, 0.16);
+}
+
+.grid-fade {
+  -webkit-mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 40%, transparent 100%);
+}
+
+/* ---------- AI detection overlays ----------
+   Position and size are written from the render loop as CSS variables so the
+   boxes track their 3D objects without re-rendering React every frame. */
+.det-root {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.det-frame {
+  position: absolute;
+  left: calc(var(--w) * -0.5);
+  top: calc(var(--h) * -1);
+  width: var(--w);
+  height: var(--h);
+}
+
+.det-corner {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-color: inherit;
+  border-style: solid;
+  border-width: 0;
+}
+.det-corner.tl {
+  left: -1px;
+  top: -1px;
+  border-left-width: 2px;
+  border-top-width: 2px;
+}
+.det-corner.tr {
+  right: -1px;
+  top: -1px;
+  border-right-width: 2px;
+  border-top-width: 2px;
+}
+.det-corner.bl {
+  left: -1px;
+  bottom: -1px;
+  border-left-width: 2px;
+  border-bottom-width: 2px;
+}
+.det-corner.br {
+  right: -1px;
+  bottom: -1px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+}
+
+.det-panel {
+  position: absolute;
+  left: calc(var(--w) * 0.5 + 14px);
+  top: calc(var(--h) * -1 - 4px);
+  white-space: nowrap;
+}
+.det-flip .det-panel {
+  left: auto;
+  right: calc(var(--w) * 0.5 + 14px);
+}
+
+.det-lead {
+  position: absolute;
+  left: calc(var(--w) * 0.5);
+  top: calc(var(--h) * -1 + 6px);
+  width: 14px;
+  height: 1px;
+}
+.det-flip .det-lead {
+  left: auto;
+  right: calc(var(--w) * 0.5);
+}
+
+/* ---------- Adaptive sizing ----------
+   The dashboard is a single non-scrolling screen, so instead of breakpoints
+   that reflow the layout we shrink the fixed chrome (header, timeline, footer)
+   and the display type as vertical space runs out. The three-column structure
+   is identical at every size. */
+:root {
+  --hdr-h: 74px;
+  --ftr-h: 26px;
+  --tl-h: 248px;
+  --tl-rows: 5;
+  --pad: 10px;
+  --t-title: 26px;
+  --t-sub: 11.5px;
+  --t-status: 38px;
+  --t-gauge: 176px;
+  --t-stat: 25px;
+}
+
+@media (max-height: 1010px) {
+  :root {
+    --hdr-h: 66px;
+    --ftr-h: 22px;
+    --tl-h: 214px;
+    --tl-rows: 4;
+    --pad: 9px;
+    --t-title: 23px;
+    --t-status: 34px;
+    --t-gauge: 158px;
+    --t-stat: 23px;
+  }
+}
+
+@media (max-height: 900px) {
+  :root {
+    --hdr-h: 60px;
+    --ftr-h: 20px;
+    --tl-h: 188px;
+    --tl-rows: 4;
+    --pad: 8px;
+    --t-title: 21px;
+    --t-sub: 10.5px;
+    --t-status: 30px;
+    --t-gauge: 142px;
+    --t-stat: 21px;
+  }
+}
+
+@media (max-height: 800px) {
+  :root {
+    --hdr-h: 54px;
+    --ftr-h: 20px;
+    --tl-h: 178px;
+    --tl-rows: 3;
+    --pad: 7px;
+    --t-title: 19px;
+    --t-sub: 10px;
+    --t-status: 27px;
+    --t-gauge: 126px;
+    --t-stat: 19px;
+  }
+}
+
+/* Narrow desktops lose the location column in the timeline before anything
+   else, since the message already names the zone. */
+@media (max-width: 1500px) {
+  :root {
+    --t-title: 21px;
+  }
+}
+
+.tl-row:nth-child(n + 6) {
+  display: none;
+}
+@media (max-height: 1010px) {
+  .tl-row:nth-child(n + 5) {
+    display: none;
+  }
+}
+@media (max-height: 800px) {
+  .tl-row:nth-child(n + 4) {
+    display: none;
+  }
+}
+
+/* The controls trigger lives on the footer strip so it never sits on top of a
+   dashboard card at laptop heights. */
+.sim-trigger {
+  position: fixed;
+  right: 10px;
+  bottom: 0;
+  height: var(--ftr-h);
+  z-index: 40;
+}

@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+.env*.local
+.DS_Store
+npm-debug.log*
+
+# Source scans kept locally; public/models holds the byte-identical copies the
+# app actually serves, so committing both would duplicate ~57 MB.
+raw_models/

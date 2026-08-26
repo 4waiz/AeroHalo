@@ -1,0 +1,36 @@
+{
+  "name": "aerohalo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AeroHalo Predictive Airside Safety Dashboard",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-three/drei": "10.7.6",
+    "@react-three/fiber": "9.3.0",
+    "@react-three/postprocessing": "^3.0.4",
+    "framer-motion": "^13.1.1",
+    "lucide-react": "0.544.0",
+    "next": "^15.5.24",
+    "postprocessing": "^6.37.8",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "three": "0.180.0",
+    "zustand": "5.0.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.13",
+    "@types/node": "24.5.2",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "@types/three": "0.180.0",
+    "postcss": "8.5.6",
+    "tailwindcss": "4.1.13",
+    "typescript": "5.9.2"
+  }
+}
