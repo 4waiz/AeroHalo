@@ -41,8 +41,6 @@ export class ObjectRegistry {
   private af!: Airframe;
   private rng = makeRng(0xc0ffee);
   private fodSeq = 0;
-  private vehSeq = 0;
-  private persSeq = 0;
 
   constructor(af: Airframe) {
     this.rebuild(af);
@@ -61,8 +59,6 @@ export class ObjectRegistry {
     this.af = af;
     this.rng = makeRng(0xc0ffee);
     this.fodSeq = 0;
-    this.vehSeq = 0;
-    this.persSeq = 0;
 
     this.routes.clear();
     for (const r of buildRoutes(af)) this.routes.set(r.id, r);

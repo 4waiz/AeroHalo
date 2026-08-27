@@ -41,6 +41,3 @@ export function setHardwareProvider(p: HardwareProvider) {
   active = p;
 }
 
-export function isSimulated(p: HardwareProvider): p is SimulationProvider {
-  return p.id === "simulation";
-}

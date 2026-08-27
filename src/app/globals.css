@@ -375,3 +375,11 @@ body {
   height: var(--ftr-h);
   z-index: 40;
 }
+
+/* Label lift applied by the projector when two detections overlap. */
+.det-panel {
+  transform: translateY(var(--dy, 0px));
+}
+.det-lead {
+  transform: translateY(var(--dy, 0px));
+}

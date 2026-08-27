@@ -9,8 +9,6 @@ export const clamp = (v: number, lo: number, hi: number) =>
 
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-export const invLerp = (a: number, b: number, v: number) =>
-  a === b ? 0 : clamp((v - a) / (b - a), 0, 1);
 
 /** Frame-rate independent exponential smoothing. */
 export const damp = (current: number, target: number, lambda: number, dt: number) =>
@@ -21,12 +19,7 @@ export const smoothstep = (t: number) => {
   return x * x * (3 - 2 * x);
 };
 
-export const easeOutCubic = (t: number) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
 
-export const easeInOutCubic = (t: number) => {
-  const x = clamp(t, 0, 1);
-  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-};
 
 /** Shortest signed angular difference, in radians. */
 export function angleDelta(from: number, to: number) {
@@ -188,16 +181,7 @@ export function sectorPoly(
   return pts;
 }
 
-/** Uniformly scale a polygon about the origin. */
-export const scalePoly = (poly: Vec2[], s: number): Vec2[] =>
-  poly.map((p) => ({ x: p.x * s, z: p.z * s }));
 
-/** Total length of a polyline. */
-export function polylineLength(pts: Vec2[]) {
-  let total = 0;
-  for (let i = 1; i < pts.length; i++) total += dist(pts[i - 1], pts[i]);
-  return total;
-}
 
 /* ------------------------------------------------------------------ */
 /* Deterministic pseudo-random                                         */

@@ -10,24 +10,20 @@
 
 export interface OverlayNode {
   root: HTMLElement;
-  box: HTMLElement | null;
+  /** The label card, measured once so overlap tests use its real size. */
+  panel: HTMLElement | null;
+  w: number;
+  h: number;
 }
 
 const nodes = new Map<string, OverlayNode>();
 
-export function registerOverlay(id: string, root: HTMLElement | null, box: HTMLElement | null) {
+export function registerOverlay(id: string, root: HTMLElement | null, panel: HTMLElement | null) {
   if (!root) nodes.delete(id);
-  else nodes.set(id, { root, box });
+  else nodes.set(id, { root, panel, w: 0, h: 0 });
 }
 
 export function getOverlayNode(id: string) {
   return nodes.get(id);
 }
 
-export function overlayIds() {
-  return nodes.keys();
-}
-
-export function clearOverlays() {
-  nodes.clear();
-}

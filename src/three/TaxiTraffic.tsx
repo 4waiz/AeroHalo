@@ -22,8 +22,8 @@ import { useOptionalGLTF } from "./useOptionalGLTF";
 
 /** Parallel taxiways behind the stand, in stand units (scaled by worldScale). */
 const LANES = [
-  { z: 42, dir: 1, speed: 8.4 },
-  { z: 56, dir: -1, speed: 6.8 },
+  { z: 36, dir: 1, speed: 8.4 },
+  { z: 50, dir: -1, speed: 6.8 },
 ];
 
 /** One entry per aircraft on the taxiways. */
@@ -255,7 +255,7 @@ export function TaxiTraffic({ af }: { af: Airframe }) {
       </instancedMesh>
 
       {/* the aircraft themselves */}
-      {TRAFFIC.map((entry, i) => (
+      {TRAFFIC.map((_entry, i) => (
         <group
           key={i}
           ref={(el) => {

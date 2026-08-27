@@ -171,7 +171,7 @@ export function AirsideScene() {
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 0.98,
       }}
-      camera={{ fov: 34, near: 0.4, far: 400 * s, position: [0, 14 * s, -30 * s] }}
+      camera={{ fov: 34, near: 0.4, far: 400 * s, position: [0, 17 * s, -32 * s] }}
       className="absolute inset-0"
     >
       <SceneFog scale={s} />

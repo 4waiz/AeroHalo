@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { TrackedOverlay } from "@/sim/types";
@@ -16,6 +16,12 @@ import { getOverlayNode, registerOverlay } from "./overlayBus";
 const base = new THREE.Vector3();
 const top = new THREE.Vector3();
 
+/** Fallback footprint, used only until a card has been measured. */
+const LABEL_W = 150;
+const LABEL_H = 46;
+/** Offsets tried in order when a label needs to move clear of another. */
+const LABEL_SLOTS = [0, -48, -96, 48, -144, 96, -192];
+
 /**
  * Projects each tracked object's live world position to screen space and writes
  * the result straight onto the overlay DOM nodes.
@@ -29,10 +35,14 @@ export function OverlayProjector({ af }: { af: Airframe }) {
   const size = useThree((s) => s.size);
   const engine = useMemo(() => getEngine(), []);
 
+  /** Labels placed this frame, used to keep them from stacking on top of each other. */
+  const placed = useRef<{ x0: number; x1: number; sy: number; dy: number }[]>([]);
+
   useFrame(() => {
     const reg = engine.registry;
     const w = size.width;
     const h = size.height;
+    placed.current.length = 0;
 
     const place = (
       id: string,
@@ -71,7 +81,46 @@ export function OverlayProjector({ af }: { af: Airframe }) {
       node.root.style.setProperty("--h", `${px.toFixed(1)}px`);
 
       // Flip the label to the inside of the frame near the right edge.
-      node.root.classList.toggle("det-flip", sx > w * 0.6);
+      const flip = sx > w * 0.6;
+      node.root.classList.toggle("det-flip", flip);
+
+      /* Two objects standing close together would otherwise print their labels
+         on top of each other. Work out the card's real horizontal span (which
+         depends on the flip) and search upward, then downward, for the first
+         slot that clears everything already placed this frame. The box stays
+         locked to the object; only the label card moves. */
+      /* Measure the card once rather than guessing: a "Baggage Cart" label and
+         a "Person" label are very different widths, and a guess that is too
+         small lets them overlap anyway. Cached, so this is not a per-frame
+         layout read. */
+      if (!node.w && node.panel) {
+        node.w = node.panel.offsetWidth || LABEL_W;
+        node.h = node.panel.offsetHeight || LABEL_H;
+      }
+      const lw = node.w || LABEL_W;
+      const lh = node.h || LABEL_H;
+
+      const gap = pw / 2 + 14;
+      const x0 = flip ? sx - gap - lw : sx + gap;
+      const x1 = x0 + lw;
+      const labelY = sy - px;
+
+      let dy = 0;
+      const clashes = (candidate: number) =>
+        placed.current.some(
+          (o) =>
+            x0 < o.x1 &&
+            o.x0 < x1 &&
+            Math.abs(o.sy + o.dy - (labelY + candidate)) < lh + 4
+        );
+      for (const step of LABEL_SLOTS) {
+        if (!clashes(step)) {
+          dy = step;
+          break;
+        }
+      }
+      placed.current.push({ x0, x1, sy: labelY, dy });
+      node.root.style.setProperty("--dy", `${dy}px`);
     };
 
     for (const v of reg.vehicles) {
@@ -108,13 +157,18 @@ function OverlayCard({ o }: { o: TrackedOverlay }) {
   const frame = boxColor(o);
   const focusTarget = useSim((s) => s.focusTarget);
   const alarm = o.level === "critical" || o.level === "high";
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  const register = () => registerOverlay(o.id, rootRef.current, panelRef.current);
 
   return (
     <div
       className="det-root"
       style={{ opacity: 0 }}
       ref={(el) => {
-        registerOverlay(o.id, el, null);
+        rootRef.current = el;
+        register();
       }}
     >
       {/* tracking frame */}
@@ -136,7 +190,13 @@ function OverlayCard({ o }: { o: TrackedOverlay }) {
       <span className="det-lead" style={{ background: `${frame}99` }} />
 
       {/* label card */}
-      <div className="det-panel">
+      <div
+        className="det-panel"
+        ref={(el) => {
+          panelRef.current = el;
+          register();
+        }}
+      >
         <button
           type="button"
           onClick={() => focusTarget(o.id)}

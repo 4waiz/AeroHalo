@@ -42,8 +42,6 @@ export function CameraRig({ af }: { af: Airframe }) {
   const dragging = useRef(false);
   /** Blocks automation for a moment after the operator lets go. */
   const manualUntil = useRef(0);
-  /** Auto-tracking offset applied on top of the preset look-at point. */
-  const trackOffset = useRef(new THREE.Vector3());
 
   /* ---- jump to a preset ---- */
   useEffect(() => {
@@ -52,7 +50,6 @@ export function CameraRig({ af }: { af: Airframe }) {
     goalTarget.current.set(...p.target);
     goalFov.current = p.fov;
     transitioning.current = true;
-    trackOffset.current.set(0, 0, 0);
   }, [cameraId, viewNonce, presets]);
 
   /* ---- initial placement without an animation ---- */

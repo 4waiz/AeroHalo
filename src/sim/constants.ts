@@ -12,10 +12,7 @@ import { octagonPoly, rectPoly, sectorPoly, trapezoidPoly } from "./geometry";
 
 export const STAND_ID = "A12";
 export const APRON_NAME = "Stand A12";
-export const FACILITY = "AeroHalo Airside";
 
-/** Simulation update rate for the physics/risk core. */
-export const SIM_HZ = 60;
 /** Rate at which the React-facing snapshot is published. */
 export const UI_HZ = 10;
 
@@ -389,8 +386,8 @@ export function buildCameraPresets(af: Airframe): Record<CameraPresetId, CameraP
     "CAM 01": {
       id: "CAM 01",
       label: "Top apron view",
-      position: [0, 14 * s, -30 * s],
-      target: [0, 3 * s, 6 * s],
+      position: [0, 17 * s, -32 * s],
+      target: [0, 3 * s, 5 * s],
       fov: 34,
     },
     "CAM 02": {
@@ -480,7 +477,3 @@ export function describeLocation(p: Vec2, af: Airframe): string {
   return base + "Forward Fuselage";
 }
 
-/** Short version used on the alert cards. */
-export function shortLocation(p: Vec2, af: Airframe): string {
-  return describeLocation(p, af);
-}

@@ -13,7 +13,7 @@ import {
   Cog,
   Flame,
 } from "lucide-react";
-import type { Alert, Severity } from "@/sim/types";
+import type { Alert } from "@/sim/types";
 import { useSim } from "@/sim/store";
 import { AIRFRAMES } from "@/sim/aircraftTypes";
 import { Panel, PanelLabel, SegmentBar } from "./ui";

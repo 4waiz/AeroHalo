@@ -16,11 +16,8 @@ import type {
 import { AIRFRAMES, DEFAULT_AIRFRAME, type AirframeId, type Airframe } from "./aircraftTypes";
 import {
   MAX_VISIBLE_EVENTS,
-  PREDICT_HORIZON,
   TTC_AUTOSTOP,
   TTC_CAUTION,
-  TTC_CRITICAL,
-  TTC_HIGH,
   describeLocation,
   fodSpots,
   intrusionTarget,
@@ -89,9 +86,6 @@ export class SimulationEngine {
 
   hazards: Hazard[] = [];
   intervention: InterventionBanner | null = null;
-
-  /** Set by the UI when an alert or timeline row is clicked. */
-  focusRequest: { id: string; at: number } | null = null;
 
   onAudio?: (cue: AudioCue) => void;
 
@@ -288,10 +282,6 @@ export class SimulationEngine {
     this.muted = m;
   }
 
-  /** Focuses the 3D camera on a tracked object. */
-  focus(id: string) {
-    this.focusRequest = { id, at: this.clock };
-  }
 
   private cue(c: AudioCue) {
     if (!this.muted) this.onAudio?.(c);
@@ -469,6 +459,7 @@ export class SimulationEngine {
         this.spawnFodRandom();
         this.spawnFodRandom();
         this.sensors.degradeCameras(1);
+        this.sensors.degradeSensors(1);
         this.startEngines();
         this.events.log(
           this.clock,
@@ -1405,7 +1396,11 @@ export class SimulationEngine {
     }
 
     void af;
-    return out;
+    // Worst first, then capped: past half a dozen boxes the feed stops being
+    // readable and the operator loses the ones that matter.
+    return out
+      .sort((a, b) => RiskEngine.severityRank(b.level) - RiskEngine.severityRank(a.level))
+      .slice(0, 6);
   }
 
   snapshot(): SimSnapshot {

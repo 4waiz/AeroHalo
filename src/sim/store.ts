@@ -142,7 +142,6 @@ export const useSim = create<UiState>((set, get) => ({
 
   focusTarget: (id) => {
     const e = getEngine();
-    e.focus(id);
     set({
       focus: { id, at: e.clock, point: e.registry.locate(id) },
       cameraId: get().cameraId,

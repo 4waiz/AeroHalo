@@ -39,7 +39,6 @@ function rng(seed: number) {
 
 /** Draws a shape at every wrap offset that could touch the tile edge. */
 function wrapped(
-  ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   reach: number,
@@ -71,7 +70,7 @@ function buildHeight(seed: number): Float32Array {
     const y = r() * SIZE;
     const rad = 26 + r() * 92;
     const v = 108 + Math.floor(r() * 44);
-    wrapped(ctx, x, y, rad, (cx, cy) => {
+    wrapped(x, y, rad, (cx, cy) => {
       const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
       g.addColorStop(0, `rgba(${v},${v},${v},0.5)`);
       g.addColorStop(1, `rgba(${v},${v},${v},0)`);
@@ -130,7 +129,7 @@ export function getConcreteTextures(): ConcreteTextures | null {
     const x = r() * SIZE;
     const y = r() * SIZE;
     const rad = 12 + r() * 54;
-    wrapped(col, x, y, rad, (cx, cy) => {
+    wrapped(x, y, rad, (cx, cy) => {
       const g = col.createRadialGradient(cx, cy, 0, cx, cy, rad);
       g.addColorStop(0, `rgba(38,41,45,${0.2 + r() * 0.24})`);
       g.addColorStop(1, "rgba(38,41,45,0)");
