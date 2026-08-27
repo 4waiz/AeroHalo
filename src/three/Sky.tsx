@@ -37,7 +37,7 @@ function getCloudTexture(): THREE.Texture | null {
 
   const c = document.createElement("canvas");
   c.width = c.height = TEX;
-  const ctx = c.getContext("2d")!;
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, TEX, TEX);
 
@@ -151,8 +151,8 @@ export function SkyDome({ scale }: { scale: number }) {
       uClouds: { value: clouds },
       // Daylight: pale haze on the skyline lifting to a real blue overhead,
       // with cloud bases in shadow and tops catching the sun.
-      uHorizon: { value: new THREE.Color("#bcd3e4") },
-      uZenith: { value: new THREE.Color("#2e6fb4") },
+      uHorizon: { value: new THREE.Color("#d2e3f0") },
+      uZenith: { value: new THREE.Color("#3d80c8") },
       uCloud: { value: new THREE.Color("#9fb0c0") },
       uCloudLit: { value: new THREE.Color("#ffffff") },
     }),

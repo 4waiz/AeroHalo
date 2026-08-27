@@ -389,9 +389,9 @@ export function buildCameraPresets(af: Airframe): Record<CameraPresetId, CameraP
     "CAM 01": {
       id: "CAM 01",
       label: "Top apron view",
-      position: [0, 21.5 * s, -28.5 * s],
-      target: [0, 1.4 * s, 0.6 * s],
-      fov: 32,
+      position: [0, 14 * s, -30 * s],
+      target: [0, 3 * s, 6 * s],
+      fov: 34,
     },
     "CAM 02": {
       id: "CAM 02",

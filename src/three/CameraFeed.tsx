@@ -52,7 +52,7 @@ export function CameraFeed() {
       <Noise premultiply opacity={0.058} blendFunction={BlendFunction.OVERLAY} />
       <BrightnessContrast brightness={0.018} contrast={0.1} />
       <HueSaturation saturation={-0.07} hue={0} />
-      <Vignette offset={0.26} darkness={0.62} eskil={false} />
+      <Vignette offset={0.42} darkness={0.4} eskil={false} />
     </EffectComposer>
   );
 }

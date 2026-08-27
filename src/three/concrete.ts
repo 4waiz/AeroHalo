@@ -62,7 +62,7 @@ function buildHeight(seed: number): Float32Array {
   // Large tonal blotches: individual concrete pours cure at different shades.
   const c = document.createElement("canvas");
   c.width = c.height = SIZE;
-  const ctx = c.getContext("2d")!;
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
   ctx.fillStyle = "#808080";
   ctx.fillRect(0, 0, SIZE, SIZE);
 
@@ -110,7 +110,7 @@ export function getConcreteTextures(): ConcreteTextures | null {
   /* ---------------- albedo ---------------- */
   const colC = document.createElement("canvas");
   colC.width = colC.height = SIZE;
-  const col = colC.getContext("2d")!;
+  const col = colC.getContext("2d", { willReadFrequently: true })!;
   const colImg = col.createImageData(SIZE, SIZE);
   // Base tone, matched to the apron material the markings were authored against.
   const BASE = [96, 102, 108];
@@ -144,7 +144,7 @@ export function getConcreteTextures(): ConcreteTextures | null {
   /* ---------------- roughness ---------------- */
   const roughC = document.createElement("canvas");
   roughC.width = roughC.height = SIZE;
-  const rough = roughC.getContext("2d")!;
+  const rough = roughC.getContext("2d", { willReadFrequently: true })!;
   const roughImg = rough.createImageData(SIZE, SIZE);
   for (let i = 0; i < SIZE * SIZE; i++) {
     // 0.78 - 1.0: polished patches where traffic has worn the surface.
@@ -158,7 +158,7 @@ export function getConcreteTextures(): ConcreteTextures | null {
   /* ---------------- normal (Sobel over the height field) ---------------- */
   const normC = document.createElement("canvas");
   normC.width = normC.height = SIZE;
-  const norm = normC.getContext("2d")!;
+  const norm = normC.getContext("2d", { willReadFrequently: true })!;
   const normImg = norm.createImageData(SIZE, SIZE);
   const at = (x: number, y: number) =>
     height[((y + SIZE) % SIZE) * SIZE + ((x + SIZE) % SIZE)];

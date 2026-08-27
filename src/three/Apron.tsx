@@ -462,9 +462,9 @@ export function Apron({ af }: { af: Airframe }) {
     const noise = makeNoise(0x5eed01);
 
     /* --- ground extents, a little larger than the logical bounds --- */
-    const gw = (b.maxX - b.minX) * 1.3;
-    const gd = (b.maxZ - b.minZ) * 1.3;
-    const gcz = (b.minZ + b.maxZ) / 2;
+    const gw = (b.maxX - b.minX) * 2.6;
+    const gd = (b.maxZ - b.minZ) * 2.8;
+    const gcz = (b.minZ + b.maxZ) / 2 + 25 * s;
     const gx0 = -gw / 2;
     const gx1 = gw / 2;
     const gz0 = gcz - gd / 2;

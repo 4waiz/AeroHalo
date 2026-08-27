@@ -166,6 +166,22 @@ GLB into that frame ([`aircraftTypes.ts`](src/sim/aircraftTypes.ts)).
 
 ---
 
+## The airfield around the stand
+
+The monitored stand sits on a working airfield, not a black void. Two parallel
+taxiways run across the far side of the apron with aircraft rolling along them,
+under a daylight sky whose cloud deck is resolved in the shader (so it converges
+toward the horizon rather than looking like wallpaper) and casts drifting shade
+across the concrete.
+
+That layer — [`TaxiTraffic.tsx`](src/three/TaxiTraffic.tsx) — is deliberately
+**outside the simulation**. Taxiing traffic is not on the stand, is not tracked
+by the sensor ring, and must never raise an alert or move the risk score, so it
+runs in its own frame loop with no reference to the engine at all. It reuses the
+two airframe GLBs that are already loaded, so it costs no extra download.
+
+---
+
 ## Collision prediction
 
 Implemented in [`CollisionPredictionEngine.ts`](src/sim/CollisionPredictionEngine.ts).

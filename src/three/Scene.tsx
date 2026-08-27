@@ -17,6 +17,7 @@ import { FodObjects } from "./FodObjects";
 import { GroundFleet } from "./GroundFleet";
 import { Personnel } from "./Personnel";
 import { SafetyZones } from "./SafetyZones";
+import { TaxiTraffic } from "./TaxiTraffic";
 import { CloudShadows, SkyDome } from "./Sky";
 import { Trajectory } from "./Trajectory";
 
@@ -121,6 +122,21 @@ function PerfProbe() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Dev handle                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Exposes the renderer internals for QA. Stripped from production builds. */
+function DevHandle() {
+  const { scene, camera, gl } = useThree();
+  useMemo(() => {
+    if (process.env.NODE_ENV === "production" || typeof window === "undefined") return;
+    const w = window as unknown as { __aeroHalo?: Record<string, unknown> };
+    w.__aeroHalo = { ...(w.__aeroHalo ?? {}), scene, camera, gl };
+  }, [scene, camera, gl]);
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Fog tuned to the stand size                                         */
 /* ------------------------------------------------------------------ */
 
@@ -130,8 +146,8 @@ function SceneFog({ scale }: { scale: number }) {
     // Fog colour matches the sky horizon so distant apron fades into weather
     // rather than into a hard band.
     // Aerial haze, matched to the sky horizon so the apron fades into daylight.
-    scene.fog = new THREE.Fog("#b3c8d8", 88 * scale, 265 * scale);
-    scene.background = new THREE.Color("#bcd3e4");
+    scene.fog = new THREE.Fog("#c9dbe8", 55 * scale, 175 * scale);
+    scene.background = new THREE.Color("#d2e3f0");
   }, [scene, scale]);
   return null;
 }
@@ -155,7 +171,7 @@ export function AirsideScene() {
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 0.98,
       }}
-      camera={{ fov: 32, near: 0.4, far: 400 * s, position: [0, 21.5 * s, -28.5 * s] }}
+      camera={{ fov: 34, near: 0.4, far: 400 * s, position: [0, 14 * s, -30 * s] }}
       className="absolute inset-0"
     >
       <SceneFog scale={s} />
@@ -168,6 +184,7 @@ export function AirsideScene() {
         <GroundFleet af={af} />
         <Personnel af={af} />
         <FodObjects af={af} />
+        <TaxiTraffic af={af} />
       </Suspense>
 
       <CloudShadows
@@ -185,6 +202,7 @@ export function AirsideScene() {
       <CameraRig af={af} />
       <OverlayProjector af={af} />
       <PerfProbe />
+      <DevHandle />
 
       <CameraFeed />
     </Canvas>
