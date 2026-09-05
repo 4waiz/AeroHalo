@@ -5,7 +5,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronDown,
   Crosshair,
+  Focus,
   Maximize2,
+  Minimize2,
   Plane,
   ShieldAlert,
   Video,
@@ -18,6 +20,7 @@ import { CAMERA_IDS, buildCameraPresets } from "@/sim/constants";
 import { useSim } from "@/sim/store";
 import { AirsideScene, DetectionOverlayLayer } from "@/three/Scene";
 import { clearanceColor } from "@/lib/format";
+import { useFullscreen } from "@/lib/useFullscreen";
 
 /* ------------------------------------------------------------------ */
 /* Zone legend                                                         */
@@ -63,7 +66,8 @@ function CameraSelect() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
@@ -112,7 +116,9 @@ function CameraSelect() {
                 >
                   {id}
                 </span>
-                <span className="text-[10px] text-[#7d97ab]">{presets[id].label}</span>
+                <span className="text-[10px] text-[#7d97ab]">
+                  {presets[id].label}
+                </span>
               </button>
             ))}
           </motion.div>
@@ -142,7 +148,8 @@ function AirframeSelect() {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
@@ -222,7 +229,13 @@ function AirframeSelect() {
 /* Control bar                                                         */
 /* ------------------------------------------------------------------ */
 
-function ControlBar() {
+function ControlBar({
+  full,
+  toggleFull,
+}: {
+  full: boolean;
+  toggleFull: () => void;
+}) {
   const zoom = useSim((s) => s.zoom);
   const resetView = useSim((s) => s.resetView);
   const autoTracking = useSim((s) => s.autoTracking);
@@ -242,13 +255,28 @@ function ControlBar() {
         >
           <ZoomIn size={15} strokeWidth={1.9} />
         </button>
+        {/* Recentre the camera. It used to wear the Maximize2 icon, which read
+            as "fullscreen" and did something else entirely - the button below
+            is the one that icon was promising. */}
         <button
           type="button"
           onClick={resetView}
           title="Reset view"
           className="rounded-[3px] p-1.5 text-[#8fa7b8] transition-colors hover:bg-[#0d2739] hover:text-[#c4d8e5]"
         >
-          <Maximize2 size={15} strokeWidth={1.9} />
+          <Focus size={15} strokeWidth={1.9} />
+        </button>
+        <button
+          type="button"
+          onClick={toggleFull}
+          title={full ? "Exit fullscreen (F)" : "Fullscreen (F)"}
+          className="rounded-[3px] p-1.5 text-[#8fa7b8] transition-colors hover:bg-[#0d2739] hover:text-[#c4d8e5]"
+        >
+          {full ? (
+            <Minimize2 size={15} strokeWidth={1.9} />
+          ) : (
+            <Maximize2 size={15} strokeWidth={1.9} />
+          )}
         </button>
         <button
           type="button"
@@ -271,7 +299,9 @@ function ControlBar() {
           strokeWidth={1.9}
           className={autoTracking ? "text-[#31d17c]" : "text-[#7d97ab]"}
         />
-        <span className="whitespace-nowrap text-[11.5px] font-medium text-[#c4d8e5]">Auto Tracking</span>
+        <span className="whitespace-nowrap text-[11.5px] font-medium text-[#c4d8e5]">
+          Auto Tracking
+        </span>
         <span
           className={`flex h-[19px] w-[38px] items-center rounded-full px-[2px] transition-colors ${
             autoTracking ? "bg-[#1f8a58]" : "bg-[#16344a]"
@@ -279,7 +309,9 @@ function ControlBar() {
         >
           <span
             className={`flex h-[15px] items-center justify-center rounded-full bg-white text-[8px] font-bold text-[#0a1a12] transition-transform duration-200 ${
-              autoTracking ? "w-[15px] translate-x-[19px]" : "w-[15px] translate-x-0"
+              autoTracking
+                ? "w-[15px] translate-x-[19px]"
+                : "w-[15px] translate-x-0"
             }`}
           />
         </span>
@@ -338,7 +370,10 @@ function InterventionBanner() {
                 {iv.title}
               </div>
               {iv.lines.map((l, i) => (
-                <div key={i} className="text-[11.5px] leading-[1.45] text-[#c4d8e5]">
+                <div
+                  key={i}
+                  className="text-[11.5px] leading-[1.45] text-[#c4d8e5]"
+                >
                   {l}
                 </div>
               ))}
@@ -369,8 +404,22 @@ export function MonitoringView() {
   const critical = status === "CRITICAL";
   const cc = clearanceColor(clearance);
 
+  /* The element handed to the Fullscreen API is this whole panel, not the
+     canvas, so the chips and the control bar come with it. A bare canvas
+     fullscreens as a picture you cannot drive. */
+  const {
+    ref: shell,
+    full,
+    toggle: toggleFull,
+    overlayStyle,
+  } = useFullscreen<HTMLDivElement>();
+
   return (
-    <div className="panel relative min-h-0 flex-1 overflow-hidden">
+    <div
+      ref={shell}
+      className="panel relative min-h-0 flex-1 overflow-hidden bg-[#030b14]"
+      style={overlayStyle}
+    >
       {/* 3D feed */}
       <AirsideScene />
 
@@ -470,7 +519,7 @@ export function MonitoringView() {
       {/* debug HUD */}
       {debug && <DebugHud fps={fps} />}
 
-      <ControlBar />
+      <ControlBar full={full} toggleFull={toggleFull} />
     </div>
   );
 }
@@ -486,23 +535,25 @@ function DebugHud({ fps }: { fps: number }) {
 
   return (
     <div className="pointer-events-none absolute bottom-3 left-3 max-w-[330px] rounded-[4px] border border-[#14384f] bg-[#04101b]/94 px-3 py-2 font-mono text-[10px] leading-[1.55] text-[#8fa7b8]">
-      <div className="mb-1 font-bold tracking-[0.08em] text-[#3ec8ef]">DEBUG · D TO HIDE</div>
+      <div className="mb-1 font-bold tracking-[0.08em] text-[#3ec8ef]">
+        DEBUG · D TO HIDE
+      </div>
       <div>
         FPS {fps} · airframe {af.shortName} · scale {af.worldScale}
       </div>
       <div>
-        risk {snap?.riskScore.toFixed(1)} · status {snap?.safetyStatus} · clearance{" "}
-        {snap?.clearance}
+        risk {snap?.riskScore.toFixed(1)} · status {snap?.safetyStatus} ·
+        clearance {snap?.clearance}
       </div>
       <div>
-        tracks V{snap?.vehicleCount} P{snap?.personCount} F{snap?.fodCount} · zone{" "}
-        {snap?.zoneIntegrity}%
+        tracks V{snap?.vehicleCount} P{snap?.personCount} F{snap?.fodCount} ·
+        zone {snap?.zoneIntegrity}%
       </div>
       <div className="mt-1 border-t border-[#123147] pt-1">
         {snap?.hazards.slice(0, 5).map((h) => (
           <div key={h.id} className="truncate">
-            {h.targetId} r{h.risk.toFixed(1)} {h.ttc != null ? `ttc ${h.ttc.toFixed(2)}s` : "—"}{" "}
-            {h.source}
+            {h.targetId} r{h.risk.toFixed(1)}{" "}
+            {h.ttc != null ? `ttc ${h.ttc.toFixed(2)}s` : "—"} {h.source}
           </div>
         ))}
         {!snap?.hazards.length && <div>no active hazards</div>}
