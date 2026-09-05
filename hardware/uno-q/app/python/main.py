@@ -95,6 +95,8 @@ state = {
         "yellow_led": False,
         "red_led": False,
         "self_test_done": False,
+        "buzzer_on": False,
+        "buzzer_gap_ms": 0,
         "servo_enabled": False,
         "servo_commanded_state": "disabled",
     },
@@ -664,6 +666,8 @@ def loop():
                 yellow_led=bool(s.get("y", 0)),
                 red_led=bool(s.get("r", 0)),
                 self_test_done=bool(s.get("st", 0)),
+                buzzer_on=bool(s.get("bz", 0)),
+                buzzer_gap_ms=int(s.get("bg", 0)),
                 servo_enabled=bool(s.get("sv", 0)),
                 servo_commanded_state="disabled",
             )

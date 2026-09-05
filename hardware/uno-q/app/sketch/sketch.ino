@@ -16,6 +16,7 @@
  *   D8   HC-SR501 PIR OUT
  *   D9   SG90 servo signal                      (DISABLED, not commissioned)
  *   D10  SW-420 vibration module DO
+ *   D11  Active buzzer MODULE signal (module has its own driver transistor)
  *   D0/D1 deliberately unused.
  *
  * The HC-SR04 divider is mandatory: Echo idles at 5 V and D7 is a 3.3 V pin.
@@ -47,6 +48,18 @@
  * needs its own 5 V supply, a common ground and a clear arc to swing through. */
 #define ENABLE_SERVO 0
 
+/* Proximity buzzer. Set to 0 to silence it without unwiring anything.
+ *
+ * This drives an active buzzer MODULE - the little board with three pins and a
+ * transistor on it - not a bare buzzer element. A bare buzzer pulls far more
+ * current than a GPIO should source and must never hang directly off a pin.
+ *
+ * If yours beeps continuously the moment it powers up, it is an active-low
+ * module: set BUZZER_ACTIVE_HIGH to 0. Modules ship in both senses and there is
+ * no way to detect which from software. */
+#define ENABLE_BUZZER 1
+#define BUZZER_ACTIVE_HIGH 1
+
 static const uint8_t BUTTON_PIN = D2;
 static const uint8_t LED_GREEN_PIN = D3;
 static const uint8_t LED_YELLOW_PIN = D4;
@@ -56,6 +69,7 @@ static const uint8_t ECHO_PIN = D7;
 static const uint8_t PIR_PIN = D8;
 static const uint8_t SERVO_PIN = D9;
 static const uint8_t VIB_PIN = D10;
+static const uint8_t BUZZER_PIN = D11;
 
 /* Demonstration boundaries. Tabletop values, not aviation standards. */
 static const int CRITICAL_MM = 200;   // <= 20 cm -> HOLD, latching
@@ -69,6 +83,29 @@ static const unsigned long ECHO_START_TIMEOUT_US = 30000UL;
 static const unsigned long ECHO_HIGH_TIMEOUT_US = 25000UL;
 static const unsigned long RELEASE_STABLE_MS = 2000;
 static const unsigned long LINK_TIMEOUT_MS = 1500;
+
+/* Buzzer cadence. An active buzzer has ONE tone and one volume, so urgency is
+ * carried by HOW OFTEN it fires, not how loud it is.
+ *
+ * Three patterns, one per safety state, driven by the same fused level as the
+ * LEDs - so what you hear and what you see can never disagree:
+ *
+ *   SAFE     1 beep  every 60 s   a quiet "still alive" tick
+ *   CAUTION  10 beeps every 20 s
+ *   HOLD     10 beeps every 10 s
+ *
+ * UNKNOWN stays silent: the system is telling you it cannot see, and inventing
+ * a confident-sounding pattern for that would be the wrong message. */
+static const unsigned long BEEP_ON_MS = 70;     // one chirp
+static const unsigned long BEEP_OFF_MS = 130;   // gap inside a burst
+static const unsigned long BEEP_SLOT_MS = BEEP_ON_MS + BEEP_OFF_MS;
+
+static const uint8_t  BEEPS_SAFE = 1;
+static const uint8_t  BEEPS_CAUTION = 10;
+static const uint8_t  BEEPS_HOLD = 10;
+static const unsigned long CYCLE_SAFE_MS = 60000UL;
+static const unsigned long CYCLE_CAUTION_MS = 20000UL;
+static const unsigned long CYCLE_HOLD_MS = 10000UL;
 
 /* HC-SR501 needs time to settle after power-up or its output floats and would
  * look like a stream of intrusions. Readings are ignored until this expires. */
@@ -152,6 +189,11 @@ bool buttonRequest = false;     // latched press, cleared when Linux acts on it
 bool buttonPrev = true;         // INPUT_PULLUP idles HIGH
 
 /* ---------------- outputs ---------------- */
+bool buzzerOn = false;              // reported so the dashboard can show it
+unsigned long buzzerCycleMs = 0;    // start of the current burst cycle
+unsigned long buzzerGapMs = 0;      // current cycle length, 0 = silent
+uint8_t effectiveLevel = LEVEL_UNKNOWN;   // set by updateOutputs, read by the buzzer
+
 bool ledGreen = false, ledYellow = false, ledRed = false;
 bool ledSelfTestDone = false;   // reported so the dashboard knows the lamp test ran
 /* Operator-triggered lamp test. Non-blocking: updateOutputs() drives the walk
@@ -167,6 +209,58 @@ void writeLeds(bool g, bool y, bool r) {
   digitalWrite(LED_GREEN_PIN, g ? HIGH : LOW);
   digitalWrite(LED_YELLOW_PIN, y ? HIGH : LOW);
   digitalWrite(LED_RED_PIN, r ? HIGH : LOW);
+}
+
+void writeBuzzer(bool on) {
+#if ENABLE_BUZZER
+  buzzerOn = on;
+  digitalWrite(BUZZER_PIN, (on == (BUZZER_ACTIVE_HIGH != 0)) ? HIGH : LOW);
+#else
+  (void)on;
+  buzzerOn = false;
+#endif
+}
+
+/* Buzzer, driven by the SAME fused level as the LEDs.
+ *
+ * Non-blocking: a burst state machine advanced from millis(), so the 10 Hz
+ * sampling and the safe RPC handlers keep running underneath it. No tone(), no
+ * delay() - either would stall the loop the interlock depends on.
+ */
+void updateBuzzer() {
+#if ENABLE_BUZZER
+  unsigned long now = millis();
+
+  uint8_t beeps;
+  unsigned long cycle;
+  switch (effectiveLevel) {
+    case LEVEL_SAFE:    beeps = BEEPS_SAFE;    cycle = CYCLE_SAFE_MS;    break;
+    case LEVEL_CAUTION: beeps = BEEPS_CAUTION; cycle = CYCLE_CAUTION_MS; break;
+    case LEVEL_HOLD:    beeps = BEEPS_HOLD;    cycle = CYCLE_HOLD_MS;    break;
+    default:            beeps = 0;             cycle = 0;                break;
+  }
+  buzzerGapMs = cycle;
+
+  if (beeps == 0) {
+    writeBuzzer(false);
+    buzzerCycleMs = now;
+    return;
+  }
+
+  unsigned long elapsed = now - buzzerCycleMs;
+  if (elapsed >= cycle) {
+    buzzerCycleMs = now;      // next burst
+    elapsed = 0;
+  }
+
+  /* Inside the burst window each beep owns a slot: chirp, then gap. */
+  unsigned long burstLen = (unsigned long)beeps * BEEP_SLOT_MS;
+  if (elapsed < burstLen) {
+    writeBuzzer((elapsed % BEEP_SLOT_MS) < BEEP_ON_MS);
+  } else {
+    writeBuzzer(false);
+  }
+#endif
 }
 
 bool linkExpired() {
@@ -437,6 +531,7 @@ bool lamp_test() {
  *   bc vibration calibrated bi learned idle level
  *   g/y/r commanded LEDs    bq button release request sv servo enabled
  *   st  LED lamp test completed at power-on
+ *   bz  buzzer sounding now   bg  current gap in ms, 0 = silent
  */
 String read_sensors() {
   char out[248];
@@ -451,7 +546,7 @@ String read_sensors() {
     "\"l\":%d,\"x\":%d,\"p\":%d,\"pw\":%d,\"pt\":%lu,\"b\":%d,\"be\":%d,"
     "\"bt\":%lu,\"bc\":%d,\"bi\":%d,\"g\":%d,\"y\":%d,\"r\":%d,\"bq\":%d,"
     "\"pr\":%d,\"ph\":%lu,\"pl\":%d,"
-    "\"sv\":%d,\"st\":%d,\"ev\":%d}",
+    "\"sv\":%d,\"st\":%d,\"ev\":%d,\"bz\":%d,\"bg\":%lu}",
     sequenceNo, sampledMs, (unsigned long)(now - sampledMs),
     filteredMm, rawMm, rangeValid ? 1 : 0, holdActive ? 1 : 0,
     (int)localLevel(), linkExpired() ? 1 : 0,
@@ -465,7 +560,8 @@ String read_sensors() {
     pirEverLow ? 1 : 0,
     ENABLE_SERVO ? 1 : 0,
     ledSelfTestDone ? 1 : 0,
-    rangeEverValid ? 1 : 0);
+    rangeEverValid ? 1 : 0,
+    buzzerOn ? 1 : 0, buzzerGapMs);
   return String(out);
 }
 
@@ -503,6 +599,7 @@ void updateOutputs() {
   }
   if (linkFault) effective = LEVEL_HOLD;
   holdActive = (effective == LEVEL_HOLD);
+  effectiveLevel = effective;
 
   bool fault = linkExpired() || effective == LEVEL_UNKNOWN;
 
@@ -561,6 +658,11 @@ void setup() {
   writeLeds(false, true, false);
   ledSelfTestDone = true;
 
+#if ENABLE_BUZZER
+  pinMode(BUZZER_PIN, OUTPUT);
+  writeBuzzer(false);   // silent before anything has been measured
+#endif
+
 #if ENABLE_SERVO
   pinMode(SERVO_PIN, OUTPUT);
 #endif
@@ -582,6 +684,7 @@ void loop() {
    * rather than at the 10 Hz sensor cadence. */
   sampleVibration();
   sampleButton();
-  updateOutputs();
+  updateOutputs();   // computes effectiveLevel
+  updateBuzzer();    // ...which the buzzer pattern follows
   /* Return promptly so __loopHook() can run the queued safe RPC handlers. */
 }

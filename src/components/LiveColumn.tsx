@@ -1,6 +1,6 @@
 "use client";
 
-import { Lightbulb, Ruler, User, Waves } from "lucide-react";
+import { Lightbulb, Ruler, User, Volume2, VolumeX, Waves } from "lucide-react";
 import { Panel, PanelLabel } from "./ui";
 import { UNAVAILABLE, fmtNumber, fmtTtz, useLive } from "@/live/liveStore";
 import type { UnoQStatus } from "@/hardware/unoq/types";
@@ -329,7 +329,7 @@ export function LiveOutputsPanel() {
           </button>
         }
       >
-        Outputs &middot; D3 D4 D5
+        Outputs &middot; D3 D4 D5 &middot; D11
       </PanelLabel>
 
       <div className="mt-2 flex items-center justify-between">
@@ -337,12 +337,38 @@ export function LiveOutputsPanel() {
           <Lamp on={!offline && out.green_led} colour="#31d17c" label="GREEN" />
           <Lamp on={!offline && out.yellow_led} colour="#f5a623" label="YELLOW" />
           <Lamp on={!offline && out.red_led} colour="#ff4343" label="RED" />
+          {/* Chirp rate, not volume: an active buzzer has one tone, so urgency
+              is carried by how often it fires. */}
+          <div className="flex flex-col items-center gap-1">
+            <span
+              className="flex h-[17px] w-[17px] items-center justify-center rounded-full border transition-all duration-100"
+              style={{
+                background: !offline && out.buzzer_on ? "#7fd8ef" : "#0d2536",
+                borderColor: !offline && out.buzzer_on ? "#7fd8ef" : "#1b4462",
+                boxShadow: !offline && out.buzzer_on ? "0 0 10px #7fd8ef" : "none",
+                color: !offline && out.buzzer_on ? "#04121f" : "#4f6d82",
+              }}
+            >
+              {!offline && (out.buzzer_gap_ms ?? 0) > 0 ? (
+                <Volume2 size={10} strokeWidth={2.4} />
+              ) : (
+                <VolumeX size={10} strokeWidth={2.4} />
+              )}
+            </span>
+            <span className="text-[8.5px] tracking-[0.05em] text-[#6f8ba0]">
+              BUZZER
+            </span>
+          </div>
         </div>
         <div className="text-right text-[9.5px] leading-[1.5] text-[#5d7688]">
           <div className="tnum">
             MCU {rtt === null || offline ? "--" : `${Math.round(rtt)} ms`}
           </div>
-          <div>servo {offline ? "--" : out.servo_commanded_state}</div>
+          <div className="tnum">
+            {offline || !out.buzzer_gap_ms
+              ? "buzzer silent"
+              : `chirp ${out.buzzer_gap_ms} ms`}
+          </div>
         </div>
       </div>
     </Panel>

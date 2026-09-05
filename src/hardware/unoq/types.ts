@@ -70,6 +70,10 @@ export interface UnoQOutputs {
   red_led: boolean;
   /** Power-on lamp test completed. */
   self_test_done: boolean;
+  /** Proximity buzzer sounding at this instant. */
+  buzzer_on: boolean;
+  /** Gap between chirps in ms; 0 means silent. Shorter = closer. */
+  buzzer_gap_ms: number;
   servo_enabled: boolean;
   servo_commanded_state: string;
 }
