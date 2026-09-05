@@ -122,6 +122,12 @@ _last_state_key = None
 _pir_announced = False
 _vib_announced = False
 _range_announced = False
+# Previous edge states. Continuous conditions are logged when they BEGIN, not
+# for as long as they last: someone standing in front of the PIR is one event,
+# not one per poll.
+_prev_pir_motion = False
+_prev_caution = False
+_prev_ttz_band = None
 
 try:
     data_dir = Path(os.getenv("AERO_DATA_DIR", "/app/data"))
@@ -250,6 +256,7 @@ def loop():
     global sample_count, rate_window_start, last_seen_seq, lamp_test_pending
     global valid_run
     global _last_state_key, _pir_announced, _vib_announced, _range_announced
+    global _prev_pir_motion, _prev_caution, _prev_ttz_band
     global hold_since, hold_reason
 
     started = time.monotonic()
@@ -404,25 +411,41 @@ def loop():
             add_event("INFO", "SW-420 online, idle level %s"
                       % ("HIGH" if vib_idle_high else "LOW"))
 
-        # ---- condition events, de-duplicated ----------------------------
-        if pir_motion:
-            add_event("HIGH", "Personnel / motion detected", key="pir")
+        # ---- condition events, logged on the EDGE ------------------------
+        # Each of these is a continuous condition. Logging it once when it
+        # begins keeps the timeline readable; logging it per poll fills the
+        # screen with the same line and buries everything else.
+        if pir_motion and not _prev_pir_motion:
+            add_event("HIGH", "Personnel / motion detected")
+        elif _prev_pir_motion and not pir_motion:
+            add_event("INFO", "Personnel zone clear")
+        _prev_pir_motion = pir_motion
+
         if vib_edge:
+            # Already edge-latched on the MCU; the window just stops a burst of
+            # taps becoming a burst of lines.
             add_event("CRITICAL",
                       "Abnormal vibration detected. Possible impact, inspection required",
                       key="vib", dedupe_s=2.0)
+
+        ttz_band = None
         if rng["valid"] and rng["ttz_s"] is not None:
             if rng["ttz_s"] <= config.PREDICT_HOLD_S:
-                add_event("CRITICAL",
-                          "Predicted boundary entry in %.1f s" % rng["ttz_s"],
-                          key="ttz_hold", dedupe_s=3.0)
+                ttz_band = "hold"
             elif rng["ttz_s"] <= config.PREDICT_CAUTION_S:
-                add_event("HIGH",
-                          "Predicted boundary entry in %.1f s" % rng["ttz_s"],
-                          key="ttz_caution", dedupe_s=3.0)
-        if rng["valid"] and rng["caution"]:
+                ttz_band = "caution"
+        if ttz_band is not None and ttz_band != _prev_ttz_band:
+            add_event("CRITICAL" if ttz_band == "hold" else "HIGH",
+                      "Predicted boundary entry in %.1f s" % rng["ttz_s"])
+        _prev_ttz_band = ttz_band
+
+        in_caution = bool(rng["valid"] and rng["caution"])
+        if in_caution and not _prev_caution:
             add_event("CAUTION", "Object entered caution zone. Distance %.1f cm"
-                      % rng["distance_cm"], key="caution")
+                      % rng["distance_cm"])
+        elif _prev_caution and not in_caution and rng["valid"]:
+            add_event("INFO", "Object left the caution zone")
+        _prev_caution = in_caution
 
         with lock:
             if held and hold_since is None:
