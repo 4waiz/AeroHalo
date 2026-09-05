@@ -176,10 +176,6 @@ export function LiveMonitoringView() {
         </div>
       </div>
 
-      {/* the one claim this view must not overstate */}
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-[4px] border border-[#14384f] bg-[#040f19]/88 px-2.5 py-[6px] text-[9.5px] leading-[1.4] text-[#6f8ba0] backdrop-blur-[2px]">
-        Apron and aircraft are scenery. Only the range marker is measured.
-      </div>
       </div>
     </Panel>
   );

@@ -313,11 +313,7 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
         outlineWidth={0.04 * s}
         outlineColor="#04121f"
       >
-        {valid
-          ? "RANGE SENSOR BEAM - object at measured distance. Not classified, lateral position not sensed"
-          : link === "offline"
-            ? "UNO Q OFFLINE"
-            : "NO VALID ECHO - RANGE UNKNOWN"}
+        {valid ? "" : link === "offline" ? "UNO Q OFFLINE" : "NO ECHO"}
       </Text>
       </Billboard>
     </group>

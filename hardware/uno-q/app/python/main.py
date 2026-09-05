@@ -119,6 +119,13 @@ last_success = 0.0
 last_valid_at = 0.0
 manual_request = False
 release_pending = False
+# The ONLY sticky HOLD left. Sensor-driven states are live: a target that moves
+# away clears itself. An operator who presses Manual HOLD has made a decision,
+# and a decision should not evaporate because a reading changed.
+manual_hold_active = False
+# A confirmed impact keeps HOLD for a few seconds so a tap is actually visible
+# at 10 Hz, then clears on its own.
+vib_hold_until = 0.0
 lamp_test_pending = False
 hold_since = None
 hold_reason = ""
@@ -274,6 +281,7 @@ def process_commands():
 
 def loop():
     global last_success, last_valid_at, manual_request, release_pending
+    global manual_hold_active, vib_hold_until
     global sample_count, rate_window_start, last_seen_seq, lamp_test_pending
     global valid_run, last_valid_mm, vib_event_times, last_rate_hz
     global _last_state_key, _pir_announced, _vib_announced, _range_announced
@@ -370,11 +378,12 @@ def loop():
         vib_confirmed = len(vib_event_times) >= config.VIB_CONFIRM_COUNT
         vib_minor = bool(vib_edge) and not vib_confirmed
 
-        # A confirmed vibration HOLD must survive the shaking stopping, so the
-        # engine is fed the latch, not the instantaneous line level.
-        vib_forces_hold = vib_confirmed or (
-            state["vibration"]["triggered"] and state["hold"]["latched"]
-        )
+        # A confirmed impact holds for a few seconds so it is visible, then
+        # releases itself. Long enough to read, short enough that the system
+        # returns to the truth on its own.
+        if vib_confirmed:
+            vib_hold_until = now + config.VIBRATION_HOLD_S
+        vib_forces_hold = now < vib_hold_until
         # A stuck output is a sensor fault, not personnel. Excluded from the
         # score so it cannot hold the whole system at CAUTION indefinitely.
         verdict = fuse(rng, pir_motion and not pir_suspect,
@@ -384,9 +393,14 @@ def loop():
 
         level = verdict["level"]
         reasons = list(verdict["reasons"])
+
+        # Operator Manual HOLD: sticky until the operator resets it.
         if manual_request:
+            manual_hold_active = True
+            manual_request = False
+        if manual_hold_active:
             level = LEVEL_HOLD
-            reasons.append("Manual HOLD requested by operator")
+            reasons.insert(0, "Manual HOLD engaged by operator")
 
         # ---- operator release -------------------------------------------
         # The physical button and the dashboard button take the same path and
@@ -399,6 +413,9 @@ def loop():
 
         release = False
         if release_pending:
+            # With live states there is nothing else to clear, so a reset now
+            # means exactly one thing: drop the operator's Manual HOLD.
+            manual_hold_active = False
             # Deliberately NOT blocked on PIR motion. The operator pressing the
             # button is themselves a person standing in front of a sensor with a
             # 7 m, 140-degree cone, so requiring "no motion" would make the
@@ -438,12 +455,11 @@ def loop():
                 state["last_command"] = "Lamp test failed: %s" % exc
 
         # ---- command the MCU --------------------------------------------
-        held = bool(
-            Bridge.call("apply_command", int(level), bool(release),
-                        timeout=config.MCU_TIMEOUT_S)
-        )
-        if manual_request:
-            manual_request = False   # the MCU owns the latch now
+        Bridge.call("apply_command", int(level), bool(release),
+                    timeout=config.MCU_TIMEOUT_S)
+        # The fused level IS the state now; the MCU no longer holds a latch of
+        # its own to ask about.
+        held = level == LEVEL_HOLD
 
         if release:
             if held:
@@ -569,6 +585,9 @@ def loop():
                                or (reasons[0] if reasons else "Safety interlock engaged"))
                 add_event("HOLD", "Safety interlock engaged: " + hold_reason)
             elif not held:
+                if hold_since is not None:
+                    add_event("INFO", "Condition cleared. System returned to "
+                              + LEVEL_NAME[level])
                 hold_since = None
                 hold_reason = ""
 
@@ -577,16 +596,8 @@ def loop():
             # now - "No echo from HC-SR04" - while the actual cause, a vibration
             # event minutes earlier, was invisible. The operator was left
             # looking at a HOLD with no explanation for it.
-            if held:
-                latch_line = "HOLD latched: %s" % (
-                    hold_reason or "safety interlock engaged")
-                reasons = [latch_line] + [r for r in reasons if r != latch_line]
-                if range_state == "SAFE" and pir_state == "SAFE" and vib_state == "SAFE":
-                    reasons.append(
-                        "All sensors now read SAFE. The interlock is held open "
-                        "pending operator inspection, not by a live hazard.")
-                reasons.append(
-                    "Clear it with Reset after inspection once the zone is verified")
+            if manual_hold_active:
+                reasons.append("Clear it with Reset after inspection")
 
             last_success = now
             online = (
@@ -676,10 +687,12 @@ def loop():
                 and vib_state == "SAFE"
             )
             state["hold"] = {
-                "latched": held,
+                # "latched" now means only the operator's Manual HOLD. Every
+                # sensor-driven HOLD is live and clears itself.
+                "latched": manual_hold_active,
                 "reason": hold_reason,
                 "since": hold_since,
-                "hazard_cleared": bool(held and all_sensors_safe),
+                "hazard_cleared": bool(manual_hold_active and all_sensors_safe),
             }
             state["sensors_online"] = online
             state["bridge_roundtrip_ms"] = round((now - started) * 1000, 1)

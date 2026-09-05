@@ -39,6 +39,10 @@ RISK_VIBRATION = 55
 # Distinct vibration events within this window to count as a confirmed impact.
 VIB_CONFIRM_COUNT = 2
 VIB_CONFIRM_WINDOW_S = 2.5
+# How long a confirmed impact keeps the system in HOLD. Long enough for a tap
+# to be visible at 10 Hz, short enough that the state returns to the truth on
+# its own. Sensor-driven states do not latch.
+VIBRATION_HOLD_S = 4.0
 
 # --- risk bands ------------------------------------------------------------
 BAND_CAUTION = 30   # 0-29 SAFE, 30-69 CAUTION, 70-100 HOLD

@@ -113,7 +113,11 @@ static bool emaReady = false;
 /* ---------------- link / latch ---------------- */
 unsigned long lastCommandMs = 0;
 bool haveCommand = false;
-bool holdLatched = false;      // starts false; state is UNKNOWN until a real read
+/* LIVE, not latched. Nothing sensor-driven sticks any more: the state tracks
+ * the current readings, so a target that moves away returns the system to SAFE
+ * by itself. The only sticky HOLD left is the operator's Manual HOLD, and Linux
+ * owns that - it simply keeps sending LEVEL_HOLD until the operator resets. */
+bool holdActive = false;
 uint8_t remoteLevel = LEVEL_UNKNOWN;
 
 /* ---------------- PIR ---------------- */
@@ -254,7 +258,8 @@ void sampleRange() {
    * quick to matter physically but long enough to reject a single bad ping. */
   if (filteredMm <= CRITICAL_MM && historyCount == 3) {
     if (criticalRun < 255) criticalRun++;
-    if (criticalRun >= CRITICAL_RUN_NEEDED) holdLatched = true;
+    /* No latch: criticalRun only decides whether the breach is confirmed.
+     * localLevel() reads it live. */
   } else {
     criticalRun = 0;
   }
@@ -388,7 +393,8 @@ bool apply_command(int level, bool release) {
   /* Only a measured hazard latches. LEVEL_UNKNOWN deliberately does not:
    * at power-on the sensor has not read anything yet, and latching then would
    * force an operator reset before the demo could even start. */
-  if (remoteLevel == LEVEL_HOLD || localLevel() == LEVEL_HOLD) holdLatched = true;
+  /* Nothing latches here. The effective level is recomputed every pass from
+   * whatever Linux last sent and whatever this MCU can see for itself. */
 
   bool stable = safeSinceMs != 0 &&
                 (unsigned long)(millis() - safeSinceMs) >= RELEASE_STABLE_MS;
@@ -404,14 +410,13 @@ bool apply_command(int level, bool release) {
    *
    * A reading INSIDE the boundary still refuses, a sensor that has never seen
    * anything still refuses, and Linux cannot talk the MCU past either. */
-  bool corridorClear =
-      (rangeValid && filteredMm > RELEASE_MM && localLevel() == LEVEL_SAFE) ||
-      (!rangeValid && rangeEverValid);
-  if (release && corridorClear && stable) {
-    holdLatched = false;
-    remoteLevel = rangeValid ? LEVEL_SAFE : LEVEL_UNKNOWN;
-  }
-  return holdLatched;   // logic state, NOT physical barrier feedback
+  /* `release` is accepted and acknowledged for protocol compatibility, but the
+   * MCU has nothing to release: with live states the interlock clears itself as
+   * soon as the readings clear. The operator's Manual HOLD is held on the Linux
+   * side, which stops sending LEVEL_HOLD when the operator resets it. */
+  (void)release;
+  (void)stable;
+  return holdActive;   // logic state, NOT physical barrier feedback
 }
 
 /* Linux -> MCU. Starts the non-blocking lamp walk. Returns immediately: the
@@ -448,7 +453,7 @@ String read_sensors() {
     "\"pr\":%d,\"ph\":%lu,\"pl\":%d,"
     "\"sv\":%d,\"st\":%d,\"ev\":%d}",
     sequenceNo, sampledMs, (unsigned long)(now - sampledMs),
-    filteredMm, rawMm, rangeValid ? 1 : 0, holdLatched ? 1 : 0,
+    filteredMm, rawMm, rangeValid ? 1 : 0, holdActive ? 1 : 0,
     (int)localLevel(), linkExpired() ? 1 : 0,
     pirMotion ? 1 : 0, pirWarming() ? 1 : 0, pirAge,
     vibActive ? 1 : 0, vibEvent ? 1 : 0, vibAge,
@@ -484,7 +489,7 @@ void updateOutputs() {
 
   /* The MCU latches HOLD by itself if Linux goes quiet. The watchdog is why
    * this is not simply a function of the level Linux last sent. */
-  if (linkExpired() && haveCommand) holdLatched = true;
+  bool linkFault = linkExpired() && haveCommand;
 
   uint8_t local = localLevel();
   /* Take the more pessimistic of the fused level from Linux and what this MCU
@@ -496,7 +501,8 @@ void updateOutputs() {
   } else if (local > effective) {
     effective = local;
   }
-  if (holdLatched) effective = LEVEL_HOLD;
+  if (linkFault) effective = LEVEL_HOLD;
+  holdActive = (effective == LEVEL_HOLD);
 
   bool fault = linkExpired() || effective == LEVEL_UNKNOWN;
 
