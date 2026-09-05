@@ -192,7 +192,8 @@ share `.next` and the running server will start throwing chunk errors.
 
 ## Safety
 
-- Servo, DC motor, stepper and buzzer are compiled out. Nothing moves.
+- Servo, DC motor and stepper are compiled out. Nothing moves.
+- The buzzer is enabled, and sounds only on amber or red.
 - Never rewire while the board is powered.
 - The HC-SR04 Echo divider must stay. Echo is 5 V; D7 is a 3.3 V pin.
 - The OV7670 is a 3.3 V part. Do not put 5 V on its logic.

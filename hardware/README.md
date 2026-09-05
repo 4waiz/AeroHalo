@@ -107,7 +107,7 @@ desktop works, prefer that and delete `platform.local.txt`.
 | OV7670 camera | wired, **not yet brought up** — see `OV7670.md` |
 | SG90 servo | compiled out (`ENABLE_SERVO 0`) |
 | DC motor / stepper | compiled out |
-| Buzzer | compiled out |
+| Buzzer on D11 | **enabled** — sounds on caution and hold only, see `BUZZER.md` |
 
 Nothing in this build moves. No actuator is energised, and no unidentified 5 V
 load is driven from a GPIO.

@@ -76,12 +76,23 @@
  * BUZZER_ACTIVE_HIGH: modules ship in both senses and software cannot tell
  * which. If yours sounds continuously at power-on, set this to 0.
  *
- * BUZZER_PASSIVE: an ACTIVE buzzer contains its own oscillator and sounds on
+ * BUZZER_DRIVE: an ACTIVE buzzer contains its own oscillator and sounds on
  * DC. A PASSIVE one is just a transducer and needs a square wave - on DC it
- * only clicks. Set this to 1 to generate a tone in software. */
+ * only clicks. Two legs in a black case look identical either way, and no
+ * amount of software can tell them apart.
+ *
+ * So mode 2 stops trying. Every chirp is driven BOTH ways in turn - half DC,
+ * half tone - and whichever half the part responds to is the half you hear.
+ * It costs nothing, it is the default, and it means an unlabelled buzzer from
+ * a kit bag just works. Modes 0 and 1 remain for a part you have identified
+ * and want driven cleanly.
+ *
+ *   0  steady DC only        an active element
+ *   1  square wave only      a passive element
+ *   2  both, every chirp     unknown part - default */
 #define ENABLE_BUZZER 1
 #define BUZZER_ACTIVE_HIGH 1
-#define BUZZER_PASSIVE 0
+#define BUZZER_DRIVE 2
 #define BUZZER_SERIES_OHMS 330
 
 static const uint8_t BUTTON_PIN = D2;
@@ -114,20 +125,22 @@ static const unsigned long LINK_TIMEOUT_MS = 1500;
  * Three patterns, one per safety state, driven by the same fused level as the
  * LEDs - so what you hear and what you see can never disagree:
  *
- *   SAFE     1 beep  every 60 s   a quiet "still alive" tick
+ *   SAFE     silent           nothing is wrong, so say nothing
  *   CAUTION  10 beeps every 20 s
  *   HOLD     10 beeps every 10 s
  *
- * UNKNOWN stays silent: the system is telling you it cannot see, and inventing
- * a confident-sounding pattern for that would be the wrong message. */
+ * The buzzer sounds only when a light is amber or red. Audio that fires when
+ * everything is fine is noise people learn to ignore, which is exactly when
+ * you need them to hear it.
+ *
+ * UNKNOWN stays silent too: the system is saying it cannot see, and a
+ * confident-sounding pattern for that would be the wrong message. */
 static const unsigned long BEEP_ON_MS = 70;     // one chirp
 static const unsigned long BEEP_OFF_MS = 130;   // gap inside a burst
 static const unsigned long BEEP_SLOT_MS = BEEP_ON_MS + BEEP_OFF_MS;
 
-static const uint8_t  BEEPS_SAFE = 1;
 static const uint8_t  BEEPS_CAUTION = 10;
 static const uint8_t  BEEPS_HOLD = 10;
-static const unsigned long CYCLE_SAFE_MS = 60000UL;
 static const unsigned long CYCLE_CAUTION_MS = 20000UL;
 static const unsigned long CYCLE_HOLD_MS = 10000UL;
 
@@ -222,7 +235,8 @@ bool buttonRequest = false;     // latched press, cleared when Linux acts on it
 bool buttonPrev = true;         // INPUT_PULLUP idles HIGH
 
 /* ---------------- outputs ---------------- */
-bool buzzerOn = false;              // reported so the dashboard can show it
+bool buzzerOn = false;              // pin level, for the steady-DC drive
+unsigned long buzzerChirpMs = 0;    // when the last inline chirp was emitted
 unsigned long buzzerCycleMs = 0;    // start of the current burst cycle
 unsigned long buzzerGapMs = 0;      // current cycle length, 0 = silent
 uint8_t effectiveLevel = LEVEL_UNKNOWN;   // set by updateOutputs, read by the buzzer
@@ -244,31 +258,91 @@ void writeLeds(bool g, bool y, bool r) {
   digitalWrite(LED_RED_PIN, r ? HIGH : LOW);
 }
 
+/* Two ways to drive the element, used by the self-identification sweep.
+ *
+ * Software cannot tell an active buzzer from a passive one - both are two legs
+ * and a case. So rather than guess, the operator test drives each in turn and
+ * lets the person in the room hear which one works.
+ *
+ * With BUZZER_DRIVE 2 you do not need that answer - both halves are driven in
+ * every chirp anyway. The sweep stays because it is still the fastest way to
+ * tell a silent buzzer from a miswired one: if the LEDs walk and nothing is
+ * audible, the fault is the wiring, not the code. */
+void buzzerDc(bool on) {
+#if ENABLE_BUZZER
+  digitalWrite(BUZZER_PIN, (on == (BUZZER_ACTIVE_HIGH != 0)) ? HIGH : LOW);
+#else
+  (void)on;
+#endif
+}
+
+/* A bounded burst of ~2.7 kHz square wave. Blocking, but only for ms
+ * milliseconds and only from the operator test or a chirp - both far inside
+ * the 1500 ms link timeout the watchdog uses. */
+void buzzerToneFor(unsigned long ms) {
+#if ENABLE_BUZZER
+  unsigned long until = micros() + ms * 1000UL;
+  while ((long)(micros() - until) < 0) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delayMicroseconds(TONE_HALF_PERIOD_US);
+    digitalWrite(BUZZER_PIN, LOW);
+    delayMicroseconds(TONE_HALF_PERIOD_US);
+  }
+  digitalWrite(BUZZER_PIN, LOW);
+#else
+  (void)ms;
+#endif
+}
+
 void writeBuzzer(bool on) {
 #if ENABLE_BUZZER
   buzzerOn = on;
-#if BUZZER_PASSIVE
-  /* A passive element needs a waveform, so a "chirp" is a short burst of
-   * square wave rather than a level. Bounded at BEEP_ON_MS so it can never
-   * run away with the loop. */
+#if BUZZER_DRIVE == 0
+  buzzerDc(on);
+#else
+  /* Anything involving a waveform emits the whole chirp here and now, rather
+   * than holding a level across loop passes. Bounded by BEEP_ON_MS either way,
+   * so it can never run away with the loop. */
   if (on) {
-    unsigned long until = micros() + (unsigned long)BEEP_ON_MS * 1000UL;
-    while ((long)(micros() - until) < 0) {
-      digitalWrite(BUZZER_PIN, HIGH);
-      delayMicroseconds(TONE_HALF_PERIOD_US);
-      digitalWrite(BUZZER_PIN, LOW);
-      delayMicroseconds(TONE_HALF_PERIOD_US);
-    }
-    buzzerOn = false;   // the chirp has already been emitted
+#if BUZZER_DRIVE == 2
+    /* Half DC, half tone. An active element sounds through the first half, a
+     * passive one through the second, so the chirp lands whichever it is. */
+    buzzerDc(true);
+    delay(BEEP_ON_MS / 2);
+    buzzerDc(false);
+    buzzerToneFor(BEEP_ON_MS / 2);
+#else
+    buzzerToneFor(BEEP_ON_MS);
+#endif
+    buzzerChirpMs = millis();
+    buzzerOn = false;   // the pin is already back low; the lamp uses the stamp
   } else {
     digitalWrite(BUZZER_PIN, LOW);
   }
-#else
-  digitalWrite(BUZZER_PIN, (on == (BUZZER_ACTIVE_HIGH != 0)) ? HIGH : LOW);
 #endif
 #else
   (void)on;
   buzzerOn = false;
+#endif
+}
+
+/* What the dashboard lamp should show.
+ *
+ * With a waveform drive the chirp is emitted inline and the pin is back low
+ * long before anyone polls, so reporting the bare level says "silent" right
+ * through a burst you can hear across the room. Report the chirp for one slot
+ * instead: the lamp then flashes in time with the sound, which is the whole
+ * point of having it. */
+bool buzzerAudible() {
+#if ENABLE_BUZZER
+#if BUZZER_DRIVE == 0
+  return buzzerOn;
+#else
+  return buzzerChirpMs != 0 &&
+         (unsigned long)(millis() - buzzerChirpMs) < BEEP_SLOT_MS;
+#endif
+#else
+  return false;
 #endif
 }
 
@@ -280,12 +354,16 @@ void writeBuzzer(bool on) {
  */
 void updateBuzzer() {
 #if ENABLE_BUZZER
+  /* The operator sweep owns the element while it runs, exactly as it owns the
+   * LEDs. Without this the cadence machine would drive it back low on the very
+   * next pass and the sweep would be inaudible. */
+  if (lampTestStartMs != 0) return;
+
   unsigned long now = millis();
 
   uint8_t beeps;
   unsigned long cycle;
   switch (effectiveLevel) {
-    case LEVEL_SAFE:    beeps = BEEPS_SAFE;    cycle = CYCLE_SAFE_MS;    break;
     case LEVEL_CAUTION: beeps = BEEPS_CAUTION; cycle = CYCLE_CAUTION_MS; break;
     case LEVEL_HOLD:    beeps = BEEPS_HOLD;    cycle = CYCLE_HOLD_MS;    break;
     default:            beeps = 0;             cycle = 0;                break;
@@ -612,7 +690,7 @@ String read_sensors() {
     ENABLE_SERVO ? 1 : 0,
     ledSelfTestDone ? 1 : 0,
     rangeEverValid ? 1 : 0,
-    buzzerOn ? 1 : 0, buzzerGapMs);
+    buzzerAudible() ? 1 : 0, buzzerGapMs);
   return String(out);
 }
 
@@ -628,10 +706,33 @@ void updateOutputs() {
     if (elapsed < LAMP_TOTAL_MS) {
       unsigned long step = elapsed / LAMP_STEP_MS;
       writeLeds(step == 0, step == 1, step == 2);
+#if ENABLE_BUZZER
+      /* Green  = steady DC   -> an ACTIVE element sounds here, a passive one is silent
+       * Yellow = nothing     -> a deliberate gap, so the two halves cannot be confused
+       * Red    = 2.7 kHz     -> a PASSIVE element sounds here, an active one may buzz thinly
+       *
+       * Whichever half is audible names the part. Neither means the fault is
+       * wiring or polarity, not code - which is the useful answer too. */
+      if (step == 0) {
+        buzzerDc(true);
+        buzzerOn = true;
+        buzzerChirpMs = millis();
+      } else if (step == 1) {
+        buzzerDc(false);
+        buzzerOn = false;
+      } else {
+        buzzerToneFor(20);   // small chunks, re-emitted every loop pass
+        buzzerOn = true;
+        buzzerChirpMs = millis();
+      }
+#endif
       return;
     }
     lampTestStartMs = 0;
     ledSelfTestDone = true;
+#if ENABLE_BUZZER
+    writeBuzzer(false);
+#endif
   }
 
   /* The MCU latches HOLD by itself if Linux goes quiet. The watchdog is why

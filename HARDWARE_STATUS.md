@@ -180,7 +180,8 @@ Firmware: `hardware/uno-q/app/sketch/sketch.ino`
 - HOLD latches at ≤ 20 cm and never self-clears
 - release requires an explicit operator reset **and** ≥ 2 s continuously beyond 50 cm
 - 1.5 s link watchdog: if Linux stops talking, the MCU latches HOLD on its own
-- servo, DC motor, stepper and buzzer are compiled out (`ENABLE_* 0`)
+- servo, DC motor and stepper are compiled out (`ENABLE_* 0`)
+- buzzer on D11 is enabled and follows the same fused level as the LEDs
 
 Verified: compiles clean on both cores (92432 bytes / 11 % on core 1.0.0).
 

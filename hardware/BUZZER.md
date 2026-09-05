@@ -31,16 +31,52 @@ It will be quieter than a 5 V module. That is the trade for not degrading the
 pin — and GPIO over-current damage is cumulative and silent: the pin does not
 fail loudly, it just gets weaker over time.
 
-### Active or passive?
+### Active or passive? — it no longer matters
+
+Two legs in a black case look identical either way, and no amount of software
+can tell them apart. So the firmware stops trying. `BUZZER_DRIVE 2` — the
+default — drives **both** ways inside every chirp: 35 ms of steady DC, then
+35 ms of ~2.7 kHz square wave.
+
+- An **active** element sounds through the first half.
+- A **passive** one sounds through the second.
+
+Either way you hear a 70 ms chirp, and an unlabelled buzzer out of a kit bag
+just works. If you have identified the part and want it driven cleanly, set
+`BUZZER_DRIVE 0` (active) or `1` (passive) in `sketch.ino`.
+
+### Which one is it? — press TEST and listen
 
 - **Active** — has its own oscillator, sounds on DC. This is what the default
   code assumes.
 - **Passive** — just a transducer, needs a square wave. On DC it only *clicks*.
 
-If you hear faint clicks instead of beeps, yours is passive. Set
-`#define BUZZER_PASSIVE 1` in `sketch.ino` and re-run `npm run unoq:start`.
-The tone is bit-banged from the main loop, so it warbles slightly whenever the
-ultrasonic sensor is waiting on an echo timeout.
+Two legs and a black case look identical either way, and software cannot tell
+them apart. So it doesn't guess. The **TEST** button on the Outputs panel walks
+the LEDs and sweeps the buzzer at the same time:
+
+| LED lit | Buzzer driven with | Sounds if the part is |
+|---|---|---|
+| **GREEN** | steady DC | **active** |
+| **YELLOW** | nothing | *(deliberate gap)* |
+| **RED** | ~2.7 kHz square wave | **passive** |
+
+The whole sweep runs 1.5 s. On the default `BUZZER_DRIVE 2` you do not need
+this to make the buzzer work — but it is still the fastest way to tell a
+**silent** buzzer from a **miswired** one:
+
+- **Sound on green** → active element. Optionally set `BUZZER_DRIVE 0`.
+- **Sound on red** → passive element. Optionally set `BUZZER_DRIVE 1`.
+- **Nothing on either, but the LEDs walk** → the MCU *is* driving D11 and the
+  element is not responding. The fault is **wiring or polarity**, not code.
+- **Nothing, and the LEDs don't walk** → the board isn't running the test at
+  all. Check the link, not the buzzer.
+
+That third case is the one worth having. Without the sweep, a dead buzzer and a
+buzzer the code never reaches look exactly the same from across a table.
+
+When a tone is involved it is bit-banged from the main loop, so it warbles
+slightly whenever the ultrasonic sensor is waiting on an echo timeout.
 
 ---
 
@@ -117,18 +153,22 @@ LEDs** — so what you hear and what you see can never disagree.
 
 | State | Pattern | Repeats every |
 |---|---|---|
-| **SAFE** | 1 beep | 60 s |
+| **SAFE** | silent | — |
 | **CAUTION** | 10 beeps | 20 s |
 | **HOLD** | 10 beeps | 10 s |
 | **UNKNOWN** | silent | — |
 
 A beep is 70 ms on, 130 ms off, so a ten-beep burst runs for two seconds.
 
-**UNKNOWN is deliberately silent.** The system is saying it cannot see, and
-inventing a confident-sounding pattern for that would be the wrong message.
+**The buzzer only sounds when a light is amber or red.** An alarm that fires
+while everything is fine is noise people learn to tune out, which is precisely
+when you need them to hear it. Silence carries information here: it means the
+lights are green.
 
-The SAFE tick every minute is a liveness signal: it tells you the system is
-awake without becoming background noise you stop hearing.
+**UNKNOWN is deliberately silent too.** The system is saying it cannot see, and
+inventing a confident-sounding pattern for that would be the wrong message. The
+LEDs still alternate amber and red, so the state is never hidden — it just
+isn't shouted.
 
 ---
 
@@ -171,10 +211,12 @@ D0 and D1 remain unused.
 
 1. Wire it with the board **powered off**.
 2. `npm run unoq:start`
-3. Leave it alone. Expect **one beep a minute** while the state is SAFE.
-4. Bring an object inside 50 cm — **ten beeps every 20 seconds**.
-5. Cross 20 cm — **ten beeps every 10 seconds**.
-6. Watch the **BUZZER** lamp on the Outputs panel flash in time with it.
+3. Press **TEST** on the Outputs panel and run the sweep above. That alone
+   settles active-vs-passive-vs-miswired.
+4. Leave it alone. Expect **silence** while the state is SAFE.
+5. Bring an object inside 50 cm — **ten beeps every 20 seconds**.
+6. Cross 20 cm — **ten beeps every 10 seconds**.
+7. Watch the **BUZZER** lamp on the Outputs panel flash in time with it.
 
 If the lamp flashes and the buzzer is silent, the wiring or the polarity is the
 problem, not the code — the lamp shows what the MCU is actually driving.
