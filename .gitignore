@@ -12,3 +12,7 @@ npm-debug.log*
 # Source scans kept locally; public/models holds the byte-identical copies the
 # app actually serves, so committing both would duplicate ~57 MB.
 raw_models/
+
+# Python bytecode from the board application and its off-board tests
+__pycache__/
+*.py[cod]
