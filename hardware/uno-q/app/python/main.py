@@ -421,11 +421,8 @@ def loop():
                 add_event("INFO", "Operator inspection completed. HOLD released.")
                 _event_seen.clear()   # let the next real condition speak again
 
-        if held and level != LEVEL_HOLD:
+        if held:
             level = LEVEL_HOLD
-            if not reasons:
-                reasons.append(
-                    "HOLD latched. Inspect the zone, then reset after inspection.")
 
         # ---- measured sample rate ---------------------------------------
         if s["s"] != last_seen_seq:
@@ -457,9 +454,13 @@ def loop():
         # begins keeps the timeline readable; logging it per poll fills the
         # screen with the same line and buries everything else.
         if pir_motion and not _prev_pir_motion:
-            add_event("HIGH", "Personnel / motion detected")
+            add_event("HIGH", "Personnel / motion detected",
+                      key="pir_motion", dedupe_s=30.0)
         elif _prev_pir_motion and not pir_motion:
-            add_event("INFO", "Personnel zone clear")
+            # Deduped: a PIR that keeps re-triggering would otherwise fill the
+            # timeline with alternating detected/clear pairs and bury
+            # everything else.
+            add_event("INFO", "Personnel zone clear", key="pir_clear", dedupe_s=30.0)
         _prev_pir_motion = pir_motion
 
         if vib_edge:
@@ -497,6 +498,18 @@ def loop():
             elif not held:
                 hold_since = None
                 hold_reason = ""
+
+            # Put the latch at the TOP of the reason list whenever it is set.
+            # Without this the panel showed only whatever was happening right
+            # now - "No echo from HC-SR04" - while the actual cause, a vibration
+            # event minutes earlier, was invisible. The operator was left
+            # looking at a HOLD with no explanation for it.
+            if held:
+                latch_line = "HOLD latched: %s" % (
+                    hold_reason or "safety interlock engaged")
+                reasons = [latch_line] + [r for r in reasons if r != latch_line]
+                reasons.append(
+                    "Clear it with Reset after inspection once the zone is verified")
 
             last_success = now
             online = (
