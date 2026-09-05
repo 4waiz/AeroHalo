@@ -69,7 +69,10 @@ export function LiveStatusPanel() {
           </div>
         </div>
 
-        <svg viewBox="0 0 200 86" className="w-[112px] shrink-0 overflow-visible">
+        <svg
+          viewBox="0 0 200 86"
+          className="w-[112px] shrink-0 overflow-visible"
+        >
           <path
             d={`M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY}`}
             fill="none"
@@ -124,7 +127,9 @@ export function LiveStatusPanel() {
           Why
         </div>
         {reasons.length === 0 ? (
-          <div className="text-[11px] text-[#5d7688]">No contributing conditions</div>
+          <div className="text-[11px] text-[#5d7688]">
+            No contributing conditions
+          </div>
         ) : (
           <ul className="space-y-[3px]">
             {reasons.slice(0, 4).map((r, i) => (
@@ -147,7 +152,15 @@ export function LiveStatusPanel() {
 /* Three sensors                                                       */
 /* ------------------------------------------------------------------ */
 
-function Row({ label, value, colour }: { label: string; value: string; colour?: string }) {
+function Row({
+  label,
+  value,
+  colour,
+}: {
+  label: string;
+  value: string;
+  colour?: string;
+}) {
   const missing = value === UNAVAILABLE;
   return (
     <div className="flex items-baseline justify-between gap-2 py-[1.5px]">
@@ -223,7 +236,11 @@ export function LiveSensorsPanel() {
     offline ? "UNKNOWN" : (v ?? "UNKNOWN");
 
   return (
-    <Panel className="shrink-0 px-3.5 pb-3 pt-3">
+    /* This is the left column's growing panel, mirroring LiveAlertsPanel on the
+       right: it absorbs the slack so the stack ends flush with the bottom of
+       the grid row instead of floating above it. Everything else stays
+       shrink-0 at its natural height. */
+    <Panel className="min-h-0 flex-1 px-3.5 pb-3 pt-3">
       <PanelLabel
         right={
           <span className="tnum text-[10.5px] font-semibold text-[#c4d8e5]">
@@ -234,53 +251,70 @@ export function LiveSensorsPanel() {
         Sensor Fusion
       </PanelLabel>
 
-      <div className="mt-2">
-        <Head
-          icon={<Ruler size={12} strokeWidth={2} />}
-          name="HC-SR04 proximity"
-          state={st(rng?.state)}
-          detail={offline ? "No telemetry" : rng?.detail}
-        />
-        <div
-          className="tnum mt-1 font-bold leading-none tracking-[-0.01em]"
-          style={{ fontSize: "var(--t-stat)", color: valid ? "#f3f7fa" : "#5d7688" }}
-        >
-          {valid ? fmtNumber(rng?.distance_cm ?? null, 1, "cm") : UNAVAILABLE}
+      {/* Scrolls internally rather than pushing the column, so a short viewport
+          shrinks this one panel and leaves the operator controls reachable. */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mt-2">
+          <Head
+            icon={<Ruler size={12} strokeWidth={2} />}
+            name="HC-SR04 proximity"
+            state={st(rng?.state)}
+            detail={offline ? "No telemetry" : rng?.detail}
+          />
+          <div
+            className="tnum mt-1 font-bold leading-none tracking-[-0.01em]"
+            style={{
+              fontSize: "var(--t-stat)",
+              color: valid ? "#f3f7fa" : "#5d7688",
+            }}
+          >
+            {valid ? fmtNumber(rng?.distance_cm ?? null, 1, "cm") : UNAVAILABLE}
+          </div>
+          <div className="mt-1">
+            <Row
+              label="Approach"
+              value={valid ? fmtNumber(closing, 1, "cm/s") : UNAVAILABLE}
+              colour={closing !== null && closing > 0 ? "#f5a623" : undefined}
+            />
+            <Row
+              label="Boundary ETA"
+              value={fmtTtz(state ?? null)}
+              colour={
+                ttz !== null && ttz <= 2
+                  ? "#ff4343"
+                  : ttz !== null
+                    ? "#f5a623"
+                    : undefined
+              }
+            />
+            <Row
+              label="Rate"
+              value={
+                offline
+                  ? UNAVAILABLE
+                  : fmtNumber(rng?.sample_rate_hz ?? null, 1, "Hz")
+              }
+            />
+          </div>
         </div>
-        <div className="mt-1">
-          <Row
-            label="Approach"
-            value={valid ? fmtNumber(closing, 1, "cm/s") : UNAVAILABLE}
-            colour={closing !== null && closing > 0 ? "#f5a623" : undefined}
-          />
-          <Row
-            label="Boundary ETA"
-            value={fmtTtz(state ?? null)}
-            colour={ttz !== null && ttz <= 2 ? "#ff4343" : ttz !== null ? "#f5a623" : undefined}
-          />
-          <Row
-            label="Rate"
-            value={offline ? UNAVAILABLE : fmtNumber(rng?.sample_rate_hz ?? null, 1, "Hz")}
+
+        <div className="mt-2 border-t border-[#12293c] pt-1.5">
+          <Head
+            icon={<User size={12} strokeWidth={2} />}
+            name="HC-SR501 personnel"
+            state={st(pir?.state)}
+            detail={offline ? "No telemetry" : pir?.detail}
           />
         </div>
-      </div>
 
-      <div className="mt-2 border-t border-[#12293c] pt-1.5">
-        <Head
-          icon={<User size={12} strokeWidth={2} />}
-          name="HC-SR501 personnel"
-          state={st(pir?.state)}
-          detail={offline ? "No telemetry" : pir?.detail}
-        />
-      </div>
-
-      <div className="mt-1.5 border-t border-[#12293c] pt-1.5">
-        <Head
-          icon={<Waves size={12} strokeWidth={2} />}
-          name="SW-420 vibration"
-          state={st(vib?.state)}
-          detail={offline ? "No telemetry" : vib?.detail}
-        />
+        <div className="mt-1.5 border-t border-[#12293c] pt-1.5">
+          <Head
+            icon={<Waves size={12} strokeWidth={2} />}
+            name="SW-420 vibration"
+            state={st(vib?.state)}
+            detail={offline ? "No telemetry" : vib?.detail}
+          />
+        </div>
       </div>
     </Panel>
   );
@@ -290,7 +324,15 @@ export function LiveSensorsPanel() {
 /* Physical outputs + link                                             */
 /* ------------------------------------------------------------------ */
 
-function Lamp({ on, colour, label }: { on: boolean; colour: string; label: string }) {
+function Lamp({
+  on,
+  colour,
+  label,
+}: {
+  on: boolean;
+  colour: string;
+  label: string;
+}) {
   return (
     <div className="flex flex-col items-center gap-1">
       <span
@@ -301,7 +343,9 @@ function Lamp({ on, colour, label }: { on: boolean; colour: string; label: strin
           boxShadow: on ? `0 0 10px ${colour}` : "none",
         }}
       />
-      <span className="text-[8.5px] tracking-[0.05em] text-[#6f8ba0]">{label}</span>
+      <span className="text-[8.5px] tracking-[0.05em] text-[#6f8ba0]">
+        {label}
+      </span>
     </div>
   );
 }
@@ -322,6 +366,7 @@ export function LiveOutputsPanel() {
             type="button"
             disabled={offline || pending}
             onClick={() => void send("lamp_test")}
+            title="Walks the three LEDs, and sweeps the buzzer: steady drive on green, silence on yellow, 2.7 kHz on red. Whichever half you hear names the part."
             className="flex items-center gap-1 rounded-[4px] border border-[#1c4a63] bg-[#0b2233] px-2 py-[3px] text-[9px] font-semibold tracking-[0.05em] text-[#7fd8ef] transition-colors hover:bg-[#102d42] disabled:opacity-40"
           >
             <Lightbulb size={10} strokeWidth={2} />
@@ -335,7 +380,11 @@ export function LiveOutputsPanel() {
       <div className="mt-2 flex items-center justify-between">
         <div className="flex gap-4">
           <Lamp on={!offline && out.green_led} colour="#31d17c" label="GREEN" />
-          <Lamp on={!offline && out.yellow_led} colour="#f5a623" label="YELLOW" />
+          <Lamp
+            on={!offline && out.yellow_led}
+            colour="#f5a623"
+            label="YELLOW"
+          />
           <Lamp on={!offline && out.red_led} colour="#ff4343" label="RED" />
           {/* Chirp rate, not volume: an active buzzer has one tone, so urgency
               is carried by how often it fires. */}
@@ -345,7 +394,8 @@ export function LiveOutputsPanel() {
               style={{
                 background: !offline && out.buzzer_on ? "#7fd8ef" : "#0d2536",
                 borderColor: !offline && out.buzzer_on ? "#7fd8ef" : "#1b4462",
-                boxShadow: !offline && out.buzzer_on ? "0 0 10px #7fd8ef" : "none",
+                boxShadow:
+                  !offline && out.buzzer_on ? "0 0 10px #7fd8ef" : "none",
                 color: !offline && out.buzzer_on ? "#04121f" : "#4f6d82",
               }}
             >
@@ -409,7 +459,7 @@ export function LiveOperatorPanel() {
             if (
               window.confirm(
                 "Confirm the demonstration zone has been physically inspected and is clear.\n\n" +
-                  "The MCU still refuses the release unless the range is valid and steady beyond 50 cm for 2 s, with no active vibration."
+                  "The MCU still refuses the release unless the range is valid and steady beyond 50 cm for 2 s, with no active vibration.",
               )
             ) {
               void send("clear_after_inspection");
@@ -425,7 +475,9 @@ export function LiveOperatorPanel() {
         </button>
       </div>
       {note && (
-        <div className="mt-1.5 text-[10px] leading-[1.4] text-[#6f8ba0]">{note}</div>
+        <div className="mt-1.5 text-[10px] leading-[1.4] text-[#6f8ba0]">
+          {note}
+        </div>
       )}
     </Panel>
   );
