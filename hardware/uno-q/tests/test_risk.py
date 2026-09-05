@@ -67,7 +67,8 @@ print("fuse(): a blind sensor is UNKNOWN, never SAFE")
 v = fuse(rng_at(None, valid=False), False, False, False)
 check("no echo -> UNKNOWN", v["level"] == LEVEL_UNKNOWN, v)
 check("no echo -> not forced", v["force_hold"] is False, v)
-check("no echo -> says so", any("range unknown" in r for r in v["reasons"]), v["reasons"])
+check("unproven sensor -> says what to do",
+      any("pass an object in front of it" in r for r in v["reasons"]), v["reasons"])
 
 print("fuse(): losing a target ON the boundary does force HOLD")
 v = fuse(rng_at(None, valid=False), False, False, True)
@@ -123,9 +124,17 @@ v = fuse(rng_at(43.0, 14.0), True, True, False)
 check("stacked -> clamped at 100", v["score"] == 100, v["score"])
 check("stacked -> every cause listed", len(v["reasons"]) >= 3, v["reasons"])
 
-print("fuse(): a blind sensor is never reported SAFE, even when quiet")
+print("fuse(): a sensor that has never seen anything is never SAFE")
 v = fuse(rng_at(None, valid=False), True, False, False)
-check("blind + PIR -> UNKNOWN, not SAFE", v["level"] == LEVEL_UNKNOWN, v)
+check("unproven + PIR -> UNKNOWN, not SAFE", v["level"] == LEVEL_UNKNOWN, v)
+
+print("fuse(): a PROVEN sensor reporting silence means an empty corridor")
+v = fuse(rng_at(None, valid=False), False, False, False, sensor_proven=True)
+check("proven + silent -> SAFE", v["level"] == LEVEL_SAFE, v)
+check("proven + silent -> says nothing detected",
+      any("No object detected" in r for r in v["reasons"]), v["reasons"])
+v = fuse(rng_at(None, valid=False), False, True, False, sensor_proven=True)
+check("proven + silent + impact -> still HOLD", v["level"] == LEVEL_HOLD, v)
 
 print("RangeTracker: speed from MCU timestamps")
 t = RangeTracker()

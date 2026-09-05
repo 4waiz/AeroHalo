@@ -324,6 +324,7 @@ def loop():
         pir_motion = bool(s["p"]) and not pir_warming
         pir_age_ms = int(s.get("pt", 999999))
         pir_seen = pir_age_ms < 999999
+        sensor_proven = bool(s.get("ev", 0)) and config.NO_ECHO_IS_CLEAR
         pir_raw_high = bool(s.get("pr", 0))
         pir_high_for = int(s.get("ph", 0))
         # An HC-SR501 output that never falls is its delay potentiometer, not a
@@ -368,7 +369,8 @@ def loop():
         # score so it cannot hold the whole system at CAUTION indefinitely.
         verdict = fuse(rng, pir_motion and not pir_suspect,
                        vib_forces_hold, range_unknown_too_long,
-                       vibration_minor=vib_minor)
+                       vibration_minor=vib_minor,
+                       sensor_proven=sensor_proven)
 
         level = verdict["level"]
         reasons = list(verdict["reasons"])
@@ -396,10 +398,13 @@ def loop():
             # The conditions that DO matter are the ones the operator can
             # actually put right: the monitored zone must be measurably clear,
             # and nothing may still be shaking.
+            # No echo is NOT a blocker. An HC-SR04 aimed down an empty lane
+            # reports no echo by design; treating that as "cannot verify" made
+            # the reset impossible to use and left the interlock red forever.
+            # What blocks a release is something MEASURABLY inside the
+            # boundary, or a disturbance still in progress.
             blockers = []
-            if not valid:
-                blockers.append("range invalid")
-            elif s["d"] <= config.RELEASE_MM:
+            if valid and s["d"] <= config.RELEASE_MM:
                 blockers.append("target within %.0f cm" % (config.RELEASE_MM / 10))
             if vib_active:
                 blockers.append("vibration still active")
@@ -532,7 +537,7 @@ def loop():
 
             last_success = now
             online = (
-                (1 if valid else 0)
+                (1 if (valid or sensor_proven) else 0)
                 + (1 if (not pir_warming and not pir_suspect) else 0)
                 + (1 if vib_calibrated else 0)
             )
@@ -549,7 +554,13 @@ def loop():
                 sample_age_ms=int(s["a"]),
                 sample_sequence=int(s["s"]),
                 sample_rate_hz=rate,
-                detail="HC-SR04 on D6 / D7" if valid else "No echo: range unknown",
+                detail=(
+                    "HC-SR04 on D6 / D7" if valid
+                    else "No object within sensor range" if sensor_proven
+                    # Until the sensor returns one real reading we cannot tell
+                    # "nothing there" from "not working", so say what would
+                    # settle it rather than leaving the operator guessing.
+                    else "Not yet proven: pass an object in front of it once"),
             )
             state["pir"].update(
                 online=not pir_warming and not pir_suspect,

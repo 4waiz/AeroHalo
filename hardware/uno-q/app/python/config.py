@@ -54,6 +54,22 @@ INVALID_HOLD_AFTER_S = 1.5
 # something. Below this, an isolated echo off an empty room is just noise, and
 # losing it must not escalate to HOLD.
 VALID_RUN_FOR_TRACK = 5
+
+# How a silent-but-working range sensor is reported.
+#
+# An HC-SR04 cannot distinguish "nothing is there" from "I am broken": both
+# produce no echo. This build resolves that by asking whether the sensor has
+# EVER returned a valid reading since boot and is still sampling. If it has, a
+# silence means the corridor is empty and is reported CLEAR. If it never has,
+# the silence stays UNKNOWN.
+#
+# The alternative - treating every silence as UNKNOWN - is safer on paper and
+# unusable in practice: a sensor aimed down an empty lane is silent nearly all
+# the time, so the dashboard sat permanently amber and the interlock could
+# never be cleared. An indicator that is always on tells you nothing.
+#
+# Set False to go back to the strict reading, where any silence is UNKNOWN.
+NO_ECHO_IS_CLEAR = True
 # The SR501 holds its output HIGH for the period set by its on-board delay
 # potentiometer, which the kit documentation gives as 3 seconds to 5 minutes.
 # A long hold is therefore a legitimate SETTING, not a fault - but an output

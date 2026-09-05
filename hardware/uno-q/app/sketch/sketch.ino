@@ -95,6 +95,11 @@ unsigned long safeSinceMs = 0;
 int rawMm = -1;
 int filteredMm = -1;
 bool rangeValid = false;
+/* Has the sensor EVER produced a valid reading since boot? A sensor that has
+ * proved it can see and is still sampling, but hears nothing, is reporting an
+ * empty corridor. One that has never seen anything might simply be broken, and
+ * those two cases must not be treated alike. */
+bool rangeEverValid = false;
 static int history[3] = { -1, -1, -1 };
 static uint8_t historyCount = 0;
 /* Consecutive in-boundary samples before the latch fires. An HC-SR04 emits
@@ -210,14 +215,19 @@ void sampleRange() {
   rawMm = ok ? measured : -1;
 
   if (!ok) {
-    /* No echo is UNKNOWN range: never 0 cm, never safe. Clearing the filter
-     * stops a stale value leaking back out once echoes return. */
+    /* No echo is UNKNOWN range for reporting: never 0 cm, never SAFE. Clearing
+     * the filter stops a stale value leaking back out once echoes return.
+     *
+     * For the RELEASE gate it counts as clear, though: nothing is echoing, so
+     * nothing is inside the boundary. The clear timer keeps running rather than
+     * resetting, which is what makes the reset usable on a sensor pointed down
+     * an empty lane. */
     historyCount = 0;
     emaReady = false;
     rangeValid = false;
     filteredMm = -1;
-    safeSinceMs = 0;
     criticalRun = 0;
+    if (safeSinceMs == 0) safeSinceMs = sampledMs;
     return;
   }
 
@@ -237,6 +247,7 @@ void sampleRange() {
   }
   filteredMm = (int)(ema + 0.5f);
   rangeValid = true;
+  rangeEverValid = true;
 
   /* Latch only once the median+EMA filter is primed AND the boundary has been
    * breached on consecutive samples. 3 samples at 10 Hz is 300 ms, far too
@@ -347,7 +358,12 @@ void sampleButton() {
 /* ------------------------------------------------------------------ */
 
 uint8_t localLevel() {
-  if (!rangeValid) return LEVEL_UNKNOWN;
+  if (!rangeValid) {
+    /* No echo from a sensor that has proved it works = nothing within range,
+     * which is the normal resting state of a corridor pointed at empty space.
+     * No echo from a sensor that has never worked stays UNKNOWN. */
+    return rangeEverValid ? LEVEL_SAFE : LEVEL_UNKNOWN;
+  }
   if (filteredMm <= CRITICAL_MM && criticalRun >= CRITICAL_RUN_NEEDED)
     return LEVEL_HOLD;
   if (filteredMm <= CRITICAL_MM) return LEVEL_CAUTION;   // confirming
@@ -377,12 +393,23 @@ bool apply_command(int level, bool release) {
   bool stable = safeSinceMs != 0 &&
                 (unsigned long)(millis() - safeSinceMs) >= RELEASE_STABLE_MS;
 
-  /* Explicit operator reset only, and only when the MCU independently agrees.
-   * Linux cannot talk the MCU into an unsafe release. */
-  if (release && rangeValid && filteredMm > RELEASE_MM &&
-      localLevel() == LEVEL_SAFE && stable) {
+  /* Explicit operator reset only, and only when the MCU independently agrees
+   * the corridor has been clear for RELEASE_STABLE_MS.
+   *
+   * Clear means NOTHING INSIDE THE BOUNDARY, satisfied two ways: a valid
+   * reading beyond RELEASE_MM, or no echo at all from a sensor that has already
+   * proved it works. Demanding a positive echo made the reset unusable - a
+   * sensor aimed down an empty lane is silent by design, so the interlock could
+   * never be cleared and stayed latched for good.
+   *
+   * A reading INSIDE the boundary still refuses, a sensor that has never seen
+   * anything still refuses, and Linux cannot talk the MCU past either. */
+  bool corridorClear =
+      (rangeValid && filteredMm > RELEASE_MM && localLevel() == LEVEL_SAFE) ||
+      (!rangeValid && rangeEverValid);
+  if (release && corridorClear && stable) {
     holdLatched = false;
-    remoteLevel = LEVEL_SAFE;
+    remoteLevel = rangeValid ? LEVEL_SAFE : LEVEL_UNKNOWN;
   }
   return holdLatched;   // logic state, NOT physical barrier feedback
 }
@@ -419,7 +446,7 @@ String read_sensors() {
     "\"l\":%d,\"x\":%d,\"p\":%d,\"pw\":%d,\"pt\":%lu,\"b\":%d,\"be\":%d,"
     "\"bt\":%lu,\"bc\":%d,\"bi\":%d,\"g\":%d,\"y\":%d,\"r\":%d,\"bq\":%d,"
     "\"pr\":%d,\"ph\":%lu,\"pl\":%d,"
-    "\"sv\":%d,\"st\":%d}",
+    "\"sv\":%d,\"st\":%d,\"ev\":%d}",
     sequenceNo, sampledMs, (unsigned long)(now - sampledMs),
     filteredMm, rawMm, rangeValid ? 1 : 0, holdLatched ? 1 : 0,
     (int)localLevel(), linkExpired() ? 1 : 0,
@@ -432,7 +459,8 @@ String read_sensors() {
     pirHighSinceMs ? (unsigned long)(now - pirHighSinceMs) : 0UL,
     pirEverLow ? 1 : 0,
     ENABLE_SERVO ? 1 : 0,
-    ledSelfTestDone ? 1 : 0);
+    ledSelfTestDone ? 1 : 0,
+    rangeEverValid ? 1 : 0);
   return String(out);
 }
 

@@ -128,7 +128,7 @@ def range_assessment(distance_mm, closing_mm_s, valid):
 
 
 def fuse(rng, pir_motion, vibration_event, range_unknown_too_long,
-         vibration_minor=False):
+         vibration_minor=False, sensor_proven=False):
     """Combine the three sensors into one explainable safety state.
 
     Contributions are additive and clamped, and every one of them writes a
@@ -180,8 +180,13 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long,
                 score += RISK_PREDICT_CAUTION
                 force_caution = True
                 reasons.append("Predicted boundary entry in %.1f s" % ttz)
+    elif sensor_proven:
+        # The sensor has demonstrated it works and is still sampling; it simply
+        # hears nothing. That is an empty corridor, not a blind spot.
+        reasons.append("No object detected within sensor range")
     else:
-        reasons.append("No echo from HC-SR04: range unknown")
+        reasons.append(
+            "HC-SR04 has not returned a reading yet: pass an object in front of it")
         if range_unknown_too_long:
             force_hold = True
             force_reason = "Range lost while a target was near the boundary"
@@ -230,8 +235,9 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long,
     else:
         level = LEVEL_SAFE
 
-    # A safe-looking score while the range sensor is blind is still not SAFE.
-    if not rng["valid"] and level == LEVEL_SAFE:
+    # A safe-looking score while the sensor is blind is still not SAFE - unless
+    # the sensor has proved it can see and is reporting an empty corridor.
+    if not rng["valid"] and level == LEVEL_SAFE and not sensor_proven:
         level = LEVEL_UNKNOWN
 
     return {
