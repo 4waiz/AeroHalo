@@ -37,6 +37,12 @@ export interface UnoQPir {
   warming_up: boolean;
   motion_detected: boolean;
   last_trigger_ms: number | null;
+  /** Raw pin level, so a held output can be told from repeated motion. */
+  raw_high: boolean;
+  /** How long the raw pin has been continuously HIGH. */
+  high_for_ms: number;
+  /** Output held high far longer than any real motion: module fault/setting. */
+  suspect_stuck: boolean;
   detail: string;
 }
 

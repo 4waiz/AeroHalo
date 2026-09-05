@@ -72,6 +72,11 @@ state = {
         "warming_up": True,
         "motion_detected": False,
         "last_trigger_ms": None,
+        # Raw pin, so a module whose on-board delay pot holds the output HIGH
+        # can be told apart from genuine repeated motion.
+        "raw_high": False,
+        "high_for_ms": 0,
+        "suspect_stuck": False,
         "detail": "Warming up",
     },
     "vibration": {
@@ -115,6 +120,9 @@ last_seen_seq = None
 # Consecutive valid samples. A stray echo off an empty room is not a "track",
 # so losing it must not be treated as losing a target we were following.
 valid_run = 0
+# Distance at the moment the track was last seen, so losing a target far away
+# is not treated the same as losing one on the boundary.
+last_valid_mm = None
 
 # Event de-duplication: key -> monotonic time it was last emitted.
 _event_seen = {}
@@ -254,7 +262,7 @@ def process_commands():
 def loop():
     global last_success, last_valid_at, manual_request, release_pending
     global sample_count, rate_window_start, last_seen_seq, lamp_test_pending
-    global valid_run
+    global valid_run, last_valid_mm
     global _last_state_key, _pir_announced, _vib_announced, _range_announced
     global _prev_pir_motion, _prev_caution, _prev_ttz_band
     global hold_since, hold_reason
@@ -281,6 +289,7 @@ def loop():
             # second of consecutive echoes means something is really there.
             if valid_run >= config.VALID_RUN_FOR_TRACK:
                 last_valid_at = now
+                last_valid_mm = s["d"]
         else:
             valid_run = 0
         speed = tracker.update(s["s"], s["t"], s["d"], valid)
@@ -290,9 +299,17 @@ def loop():
         # Before the first ever reading the correct answer is UNKNOWN, not HOLD:
         # latching at power-on would force an operator reset before the
         # demonstration could even begin.
+        # Losing the echo only escalates to HOLD if we lost a target that was
+        # ACTUALLY NEAR THE BOUNDARY. An HC-SR04 pointed across a table sees
+        # nothing most of the time, and "no object in range" is not a fault;
+        # going blind while something sat at 25 cm is. Either way the state is
+        # UNKNOWN, never SAFE - this only decides whether it latches.
         since_valid = now - last_valid_at if last_valid_at else None
         range_unknown_too_long = (
-            since_valid is not None and since_valid > config.INVALID_HOLD_AFTER_S
+            since_valid is not None
+            and since_valid > config.INVALID_HOLD_AFTER_S
+            and last_valid_mm is not None
+            and last_valid_mm <= config.CAUTION_MM
         )
 
         # ---- PIR --------------------------------------------------------
@@ -300,6 +317,12 @@ def loop():
         pir_motion = bool(s["p"]) and not pir_warming
         pir_age_ms = int(s.get("pt", 999999))
         pir_seen = pir_age_ms < 999999
+        pir_raw_high = bool(s.get("pr", 0))
+        pir_high_for = int(s.get("ph", 0))
+        # An HC-SR501 output that never falls is its delay potentiometer, not a
+        # person standing still for a minute. Flag it rather than reporting
+        # continuous personnel presence.
+        pir_suspect = pir_raw_high and pir_high_for > config.PIR_STUCK_AFTER_MS
 
         # ---- vibration --------------------------------------------------
         vib_calibrated = bool(s.get("bc", 0))
@@ -315,7 +338,10 @@ def loop():
         vib_forces_hold = vib_edge or (
             state["vibration"]["triggered"] and state["hold"]["latched"]
         )
-        verdict = fuse(rng, pir_motion, vib_forces_hold, range_unknown_too_long)
+        # A stuck output is a sensor fault, not personnel. Excluded from the
+        # score so it cannot hold the whole system at CAUTION indefinitely.
+        verdict = fuse(rng, pir_motion and not pir_suspect,
+                       vib_forces_hold, range_unknown_too_long)
 
         level = verdict["level"]
         reasons = list(verdict["reasons"])
@@ -450,7 +476,8 @@ def loop():
         with lock:
             if held and hold_since is None:
                 hold_since = utc_now()
-                hold_reason = reasons[0] if reasons else "Safety interlock engaged"
+                hold_reason = (verdict.get("force_reason")
+                               or (reasons[0] if reasons else "Safety interlock engaged"))
                 add_event("HOLD", "Safety interlock engaged: " + hold_reason)
             elif not held:
                 hold_since = None
@@ -479,8 +506,13 @@ def loop():
                 warming_up=pir_warming,
                 motion_detected=pir_motion,
                 last_trigger_ms=pir_age_ms if pir_seen else None,
+                raw_high=pir_raw_high,
+                high_for_ms=pir_high_for,
+                suspect_stuck=pir_suspect,
                 detail=(
                     "Warming up" if pir_warming
+                    else "Output held high for %.0f s: check the module delay pot"
+                         % (pir_high_for / 1000.0) if pir_suspect
                     else "Motion detected" if pir_motion
                     else "Clear"),
             )

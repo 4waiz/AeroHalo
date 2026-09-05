@@ -13,11 +13,15 @@ import {
   Cog,
   Flame,
 } from "lucide-react";
-import type { Alert } from "@/sim/types";
+import type { Alert, HeatCell } from "@/sim/types";
 import { useSim } from "@/sim/store";
 import { AIRFRAMES } from "@/sim/aircraftTypes";
 import { Panel, PanelLabel, SegmentBar } from "./ui";
 import { SEVERITY, formatUtc, heatColor, risk10 } from "@/lib/format";
+
+/** Stable empty arrays: a selector must never build a fresh one. */
+const NO_ALERTS: Alert[] = [];
+const NO_HEAT: HeatCell[] = [];
 
 /* ------------------------------------------------------------------ */
 /* Live alerts                                                         */
@@ -119,7 +123,7 @@ function AlertCard({ alert }: { alert: Alert }) {
 }
 
 export function LiveAlertsPanel() {
-  const alerts = useSim((s) => s.snap?.activeAlerts ?? []);
+  const alerts = useSim((s) => s.snap?.activeAlerts ?? NO_ALERTS);
   const setFullLogOpen = useSim((s) => s.setFullLogOpen);
   const activeCount = alerts.filter((a) => a.resolvedAt === null).length;
 
@@ -178,7 +182,7 @@ export function LiveAlertsPanel() {
 /* ------------------------------------------------------------------ */
 
 export function RiskHeatmapPanel() {
-  const heat = useSim((s) => s.snap?.heat ?? []);
+  const heat = useSim((s) => s.snap?.heat ?? NO_HEAT);
   const airframeId = useSim((s) => s.airframeId);
   const af = AIRFRAMES[airframeId];
 

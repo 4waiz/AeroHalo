@@ -8,6 +8,9 @@ import { useSim } from "@/sim/store";
 import { Panel, PanelLabel } from "./ui";
 import { SEVERITY, formatUtc } from "@/lib/format";
 
+/** Stable empty array: a selector must never build a fresh one. */
+const NO_EVENTS: SafetyEvent[] = [];
+
 function Row({ ev, onFocus }: { ev: SafetyEvent; onFocus: (id: string) => void }) {
   const s = SEVERITY[ev.level];
   const isInfo = ev.level === "info" || ev.level === "low";
@@ -61,7 +64,7 @@ function Row({ ev, onFocus }: { ev: SafetyEvent; onFocus: (id: string) => void }
 }
 
 export function EventTimeline() {
-  const events = useSim((s) => s.snap?.events ?? []);
+  const events = useSim((s) => s.snap?.events ?? NO_EVENTS);
   const focusTarget = useSim((s) => s.focusTarget);
   const setFullLogOpen = useSim((s) => s.setFullLogOpen);
 
@@ -100,7 +103,7 @@ export function EventTimeline() {
 export function FullLogOverlay() {
   const open = useSim((s) => s.fullLogOpen);
   const setOpen = useSim((s) => s.setFullLogOpen);
-  const events = useSim((s) => s.snap?.events ?? []);
+  const events = useSim((s) => s.snap?.events ?? NO_EVENTS);
   const focusTarget = useSim((s) => s.focusTarget);
 
   return (

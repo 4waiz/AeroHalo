@@ -20,6 +20,7 @@ import { SafetyZones } from "./SafetyZones";
 import { TaxiTraffic } from "./TaxiTraffic";
 import { CloudShadows, SkyDome } from "./Sky";
 import { Trajectory } from "./Trajectory";
+import { RangeBeam3D } from "./RangeBeam3D";
 
 /* ------------------------------------------------------------------ */
 /* Lighting                                                            */
@@ -156,7 +157,14 @@ function SceneFog({ scale }: { scale: number }) {
 /* Scene root                                                          */
 /* ------------------------------------------------------------------ */
 
-export function AirsideScene() {
+/**
+ * @param live  LIVE HARDWARE mode. The apron, the aircraft and the painted
+ *              safety zones stay - they are scenery, not measurements - but
+ *              every simulated entity is removed and the real HC-SR04 beam is
+ *              added. Nothing that moves in LIVE was invented by the
+ *              simulation.
+ */
+export function AirsideScene({ live = false }: { live?: boolean } = {}) {
   const airframeId = useSim((s) => s.airframeId);
   const af = AIRFRAMES[airframeId];
   const s = af.worldScale;
@@ -181,10 +189,14 @@ export function AirsideScene() {
       <Suspense fallback={null}>
         <Apron af={af} />
         <AircraftModel af={af} />
-        <GroundFleet af={af} />
-        <Personnel af={af} />
-        <FodObjects af={af} />
-        <TaxiTraffic af={af} />
+        {!live && (
+          <>
+            <GroundFleet af={af} />
+            <Personnel af={af} />
+            <FodObjects af={af} />
+            <TaxiTraffic af={af} />
+          </>
+        )}
       </Suspense>
 
       <CloudShadows
@@ -195,16 +207,22 @@ export function AirsideScene() {
       />
 
       <SafetyZones af={af} />
-      <EngineHazard af={af} />
-      <Trajectory af={af} />
+      {live ? (
+        <RangeBeam3D af={af} />
+      ) : (
+        <>
+          <EngineHazard af={af} />
+          <Trajectory af={af} />
+        </>
+      )}
 
-      <GroundPicker scale={s} />
+      {!live && <GroundPicker scale={s} />}
       <CameraRig af={af} />
-      <OverlayProjector af={af} />
+      {!live && <OverlayProjector af={af} />}
       <PerfProbe />
       <DevHandle />
 
-      <CameraFeed />
+      {!live && <CameraFeed />}
     </Canvas>
   );
 }

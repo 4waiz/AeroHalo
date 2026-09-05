@@ -115,6 +115,13 @@ uint8_t remoteLevel = LEVEL_UNKNOWN;
 bool pirMotion = false;
 unsigned long pirLastTriggerMs = 0;
 bool pirEverTriggered = false;
+/* Raw pin state and how long it has been continuously HIGH. An HC-SR501 holds
+ * its output HIGH for the period set by its on-board delay potentiometer,
+ * which ships anywhere from ~5 s to ~5 min, so a pin that never falls is a
+ * module setting, not continuous personnel presence. Reporting both lets the
+ * dashboard tell the difference instead of crying wolf. */
+int pirRaw = LOW;
+unsigned long pirHighSinceMs = 0;
 
 /* ---------------- vibration ---------------- */
 bool vibCalibrated = false;
@@ -247,15 +254,24 @@ void sampleRange() {
 /* ------------------------------------------------------------------ */
 
 void samplePir() {
+  unsigned long now = millis();
+  int level = digitalRead(PIR_PIN);
+  if (level == HIGH) {
+    if (pirRaw == LOW) pirHighSinceMs = now;   // rising edge
+  } else {
+    pirHighSinceMs = 0;
+  }
+  pirRaw = level;
+
   if (pirWarming()) {
     pirMotion = false;
     return;
   }
-  if (digitalRead(PIR_PIN) == HIGH) {
+  if (level == HIGH) {
     pirMotion = true;
-    pirLastTriggerMs = millis();
+    pirLastTriggerMs = now;
     pirEverTriggered = true;
-  } else if ((unsigned long)(millis() - pirLastTriggerMs) > PIR_STRETCH_MS) {
+  } else if ((unsigned long)(now - pirLastTriggerMs) > PIR_STRETCH_MS) {
     pirMotion = false;
   }
 }
@@ -281,6 +297,14 @@ void sampleVibration() {
     if (calStart != 0 && (unsigned long)(now - calStart) >= VIB_CAL_MS) {
       vibIdleLevel = level;
       vibCalibrated = true;
+      /* Start the debounce window here. Without this, vibLastEdgeMs is still 0
+       * and the very first post-calibration evaluation looks like an edge that
+       * happened long ago, which fired a phantom impact the instant the sensor
+       * came online and latched HOLD before the demo began. */
+      vibLastEdgeMs = now;
+      /* Anything "detected" before we knew the idle level was meaningless. */
+      vibEvent = false;
+      vibEverTriggered = false;
     }
     vibActive = false;
     return;
@@ -387,6 +411,7 @@ String read_sensors() {
     "{\"s\":%lu,\"t\":%lu,\"a\":%lu,\"d\":%d,\"w\":%d,\"v\":%d,\"h\":%d,"
     "\"l\":%d,\"x\":%d,\"p\":%d,\"pw\":%d,\"pt\":%lu,\"b\":%d,\"be\":%d,"
     "\"bt\":%lu,\"bc\":%d,\"bi\":%d,\"g\":%d,\"y\":%d,\"r\":%d,\"bq\":%d,"
+    "\"pr\":%d,\"ph\":%lu,"
     "\"sv\":%d,\"st\":%d}",
     sequenceNo, sampledMs, (unsigned long)(now - sampledMs),
     filteredMm, rawMm, rangeValid ? 1 : 0, holdLatched ? 1 : 0,
@@ -395,7 +420,10 @@ String read_sensors() {
     vibActive ? 1 : 0, vibEvent ? 1 : 0, vibAge,
     vibCalibrated ? 1 : 0, vibIdleLevel == HIGH ? 1 : 0,
     ledGreen ? 1 : 0, ledYellow ? 1 : 0, ledRed ? 1 : 0,
-    buttonRequest ? 1 : 0, ENABLE_SERVO ? 1 : 0,
+    buttonRequest ? 1 : 0,
+    pirRaw == HIGH ? 1 : 0,
+    pirHighSinceMs ? (unsigned long)(now - pirHighSinceMs) : 0UL,
+    ENABLE_SERVO ? 1 : 0,
     ledSelfTestDone ? 1 : 0);
   return String(out);
 }

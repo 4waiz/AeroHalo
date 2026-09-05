@@ -1,16 +1,25 @@
-"""Off-board tests for the range risk logic.
+"""Off-board tests for the AeroHalo range and fusion logic.
 
 Run from hardware/uno-q:   python tests/test_risk.py
 
 These are SOFTWARE tests. Passing them says the maths is right; it says nothing
-about whether a physical HC-SR04 is wired correctly.
+about whether a sensor is wired correctly.
 """
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app" / "python"))
 
-from risk import RangeTracker, assess  # noqa: E402
+from risk import (  # noqa: E402
+    LEVEL_CAUTION,
+    LEVEL_HOLD,
+    LEVEL_SAFE,
+    LEVEL_UNKNOWN,
+    RangeTracker,
+    fuse,
+    range_assessment,
+    time_to_boundary,
+)
 
 FAILURES = []
 
@@ -23,81 +32,116 @@ def check(name, cond, detail=""):
         FAILURES.append(name)
 
 
-print("assess(): missing data must never read as safe")
-r = assess(None, 0.0, False)
-check("no echo -> unknown flag", r["unknown"] is True)
-check("no echo -> risk is None, not 0", r["risk"] is None)
-check("no echo -> no fabricated ttz", r["ttz_s"] is None)
+def rng_at(cm, closing_cm_s=0.0, valid=True):
+    return range_assessment(cm * 10 if cm is not None else None,
+                            closing_cm_s * 10, valid)
 
-print("assess(): distance bands")
-r = assess(734.0, 0.0, True)
-check("73.4 cm -> level 0", r["level"] == 0, r)
-check("73.4 cm -> risk under 25", r["risk"] is not None and r["risk"] < 30, r["risk"])
 
-r = assess(430.0, 0.0, True)
-check("43.0 cm -> level 1 caution", r["level"] == 1, r)
-check("43.0 cm -> risk 25..60", 25 <= r["risk"] <= 60, r["risk"])
+print("range_assessment(): missing data is never a measurement")
+r = range_assessment(None, 0.0, False)
+check("no echo -> invalid", r["valid"] is False)
+check("no echo -> distance None, not 0", r["distance_cm"] is None)
+check("no echo -> no ttz", r["ttz_s"] is None)
+check("no echo -> not critical", r["critical"] is False)
 
-r = assess(186.0, 0.0, True)
-check("18.6 cm -> level 2 hold", r["level"] == 2, r)
-check("18.6 cm -> risk >= 80", r["risk"] >= 80, r["risk"])
+print("range_assessment(): bands")
+check("73.4 cm -> neither band", not rng_at(73.4)["critical"] and not rng_at(73.4)["caution"])
+check("43.0 cm -> caution", rng_at(43.0)["caution"] is True)
+check("18.6 cm -> critical", rng_at(18.6)["critical"] is True)
 
-print("assess(): stationary target has no predicted entry")
-r = assess(600.0, 0.0, True)
-check("stationary -> ttz None", r["ttz_s"] is None)
-r = assess(600.0, 5.0, True)  # 0.5 cm/s, under the 2 cm/s noise floor
-check("below noise floor -> ttz None", r["ttz_s"] is None)
+print("time_to_boundary(): only for a real approach")
+check("stationary -> None", time_to_boundary(600, 0.0) is None)
+check("below noise floor -> None", time_to_boundary(600, 5.0) is None)
+check("inside boundary -> None", time_to_boundary(150, 200.0) is None)
+check("receding -> None", time_to_boundary(400, -50.0) is None)
+t = time_to_boundary(425, 140.0)          # (425-200)/140
+check("42.5 cm at 14 cm/s -> 1.61 s", t is not None and abs(t - 1.607) < 0.01, t)
 
-print("assess(): prediction")
-# 42.5 cm closing at 14 cm/s -> (425-200)/140 = 1.607 s -> predictive HOLD
-r = assess(425.0, 140.0, True)
-check("ttz computed", r["ttz_s"] is not None and abs(r["ttz_s"] - 1.607) < 0.01, r["ttz_s"])
-check("ttz <= 2 s -> level 2", r["level"] == 2, r)
-check("predictive hold risk >= 90", r["risk"] >= 90, r["risk"])
+print("fuse(): nothing happening is SAFE")
+v = fuse(rng_at(80.0), False, False, False)
+check("clear -> SAFE", v["level"] == LEVEL_SAFE, v)
+check("clear -> low score", v["score"] < 30, v["score"])
+check("clear -> no force", v["force_hold"] is False)
 
-# 80 cm closing at 20 cm/s -> (800-200)/200 = 3.0 s -> predictive CAUTION
-r = assess(800.0, 200.0, True)
-check("ttz 3.0 s", abs(r["ttz_s"] - 3.0) < 0.01, r["ttz_s"])
-check("3.0 s -> level 1", r["level"] == 1, r)
+print("fuse(): a blind sensor is UNKNOWN, never SAFE")
+v = fuse(rng_at(None, valid=False), False, False, False)
+check("no echo -> UNKNOWN", v["level"] == LEVEL_UNKNOWN, v)
+check("no echo -> not forced", v["force_hold"] is False, v)
+check("no echo -> says so", any("range unknown" in r for r in v["reasons"]), v["reasons"])
 
-print("assess(): receding target never predicts entry")
-r = assess(400.0, -50.0, True)
-check("negative closing -> ttz None", r["ttz_s"] is None, r["ttz_s"])
+print("fuse(): losing a target ON the boundary does force HOLD")
+v = fuse(rng_at(None, valid=False), False, False, True)
+check("lost near boundary -> HOLD", v["level"] == LEVEL_HOLD, v)
+check("lost near boundary -> forced", v["force_hold"] is True)
 
-print("RangeTracker: speed from timestamped MCU samples")
+print("fuse(): proximity")
+v = fuse(rng_at(43.0), False, False, False)
+check("caution zone -> +30", v["score"] == 30, v["score"])
+check("caution zone -> CAUTION", v["level"] == LEVEL_CAUTION, v)
+
+v = fuse(rng_at(18.0), False, False, False)
+check("critical -> forced HOLD", v["force_hold"] is True and v["level"] == LEVEL_HOLD, v)
+check("critical -> +60", v["score"] >= 60, v["score"])
+check("critical -> names itself", "exclusion boundary" in v["force_reason"], v["force_reason"])
+
+print("fuse(): prediction")
+v = fuse(rng_at(80.0, 20.0), False, False, False)   # ttz 3.0 s
+check("ETA 3 s -> +25 CAUTION", v["level"] == LEVEL_CAUTION and v["score"] == 25, v)
+v = fuse(rng_at(42.5, 14.0), False, False, False)   # ttz 1.6 s
+check("ETA 1.6 s -> forced HOLD", v["force_hold"] and v["level"] == LEVEL_HOLD, v)
+check("ETA 1.6 s -> caution+predict", v["score"] == 80, v["score"])
+
+print("fuse(): personnel")
+v = fuse(rng_at(80.0), True, False, False)
+check("PIR -> +35", v["score"] == 35, v["score"])
+check("PIR -> CAUTION", v["level"] == LEVEL_CAUTION, v)
+check("PIR -> does not force HOLD", v["force_hold"] is False, v)
+check("PIR -> presence wording only",
+      any("Personnel / motion" in r for r in v["reasons"]), v["reasons"])
+
+print("fuse(): impact forces HOLD regardless of score")
+v = fuse(rng_at(80.0), False, True, False)
+check("vibration -> forced", v["force_hold"] is True and v["level"] == LEVEL_HOLD, v)
+check("vibration -> +55", v["score"] == 55, v["score"])
+check("vibration -> inspection wording", "inspection required" in v["force_reason"], v["force_reason"])
+
+print("fuse(): contributions add and clamp")
+v = fuse(rng_at(43.0, 14.0), True, True, False)
+check("stacked -> clamped at 100", v["score"] == 100, v["score"])
+check("stacked -> every cause listed", len(v["reasons"]) >= 3, v["reasons"])
+
+print("fuse(): a blind sensor plus personnel is still not SAFE")
+v = fuse(rng_at(None, valid=False), True, False, False)
+check("blind + PIR -> at least CAUTION", v["level"] in (LEVEL_CAUTION, LEVEL_HOLD), v)
+
+print("RangeTracker: speed from MCU timestamps")
 t = RangeTracker()
 speed = 0.0
-# 10 Hz, target closing 100 mm/s, starting at 800 mm.
-for i in range(10):
+for i in range(10):                       # 10 Hz, closing 100 mm/s from 800 mm
     speed = t.update(seq=i, sampled_ms=i * 100, distance_mm=800 - i * 10, valid=True)
 check("closing ~100 mm/s", abs(speed - 100.0) < 5.0, speed)
 
-print("RangeTracker: duplicate sequence numbers do not distort the fit")
 before = speed
 after = t.update(seq=9, sampled_ms=900, distance_mm=710, valid=True)
-check("duplicate seq keeps speed", abs(after - before) < 1e-9, (before, after))
+check("duplicate seq does not distort", abs(after - before) < 1e-9, (before, after))
 
-print("RangeTracker: an invalid sample clears the window")
 cleared = t.update(seq=10, sampled_ms=1000, distance_mm=-1, valid=False)
-check("invalid -> speed 0", cleared == 0.0, cleared)
-check("invalid -> window empty", len(t.samples) == 0)
+check("invalid clears the window", cleared == 0.0 and len(t.samples) == 0)
 
-print("RangeTracker: a receding target reports zero, not negative")
 t2 = RangeTracker()
 s = 0.0
 for i in range(10):
     s = t2.update(seq=i, sampled_ms=i * 100, distance_mm=300 + i * 10, valid=True)
-check("receding -> 0", s == 0.0, s)
+check("receding reports 0, not negative", s == 0.0, s)
 
-print("RangeTracker: implausible jump resets rather than inventing speed")
 t3 = RangeTracker()
 for i in range(6):
     t3.update(seq=i, sampled_ms=i * 100, distance_mm=800 - i * 10, valid=True)
-jump = t3.update(seq=6, sampled_ms=600, distance_mm=100, valid=True)
-check("jump -> window reset, speed 0", jump == 0.0, jump)
+check("implausible jump resets",
+      t3.update(seq=6, sampled_ms=600, distance_mm=100, valid=True) == 0.0)
 
 print()
 if FAILURES:
     print("%d FAILED: %s" % (len(FAILURES), ", ".join(FAILURES)))
     sys.exit(1)
-print("All risk-logic tests passed.")
+print("All fusion and range tests passed.")

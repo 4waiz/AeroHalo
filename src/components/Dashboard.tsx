@@ -11,10 +11,8 @@ import { SimRuntime } from "@/sim/SimRuntime";
 import {
   LiveOperatorPanel,
   LiveOutputsPanel,
-  LiveRangePanel,
-  LiveRiskGaugeCard,
-  LiveSafetyStatusCard,
-  LiveStatusCardGrid,
+  LiveSensorsPanel,
+  LiveStatusPanel,
 } from "./LiveColumn";
 import { LiveMonitoringView } from "./LiveMonitoringView";
 import {
@@ -45,11 +43,9 @@ export function Dashboard() {
         >
           {live ? (
             <>
-              <LiveSafetyStatusCard />
-              <LiveRiskGaugeCard />
-              <LiveRangePanel />
+              <LiveStatusPanel />
+              <LiveSensorsPanel />
               <LiveOutputsPanel />
-              <LiveStatusCardGrid />
               <LiveOperatorPanel />
             </>
           ) : (

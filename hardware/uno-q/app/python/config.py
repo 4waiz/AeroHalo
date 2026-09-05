@@ -42,6 +42,10 @@ INVALID_HOLD_AFTER_S = 1.5
 # something. Below this, an isolated echo off an empty room is just noise, and
 # losing it must not escalate to HOLD.
 VALID_RUN_FOR_TRACK = 5
+# An HC-SR501 holds its output HIGH for the period set by its on-board delay
+# potentiometer, which ships anywhere from ~5 s to ~5 min. Past this we treat a
+# still-high output as a module setting or a fault, not as personnel presence.
+PIR_STUCK_AFTER_MS = 25000
 
 # --- events ----------------------------------------------------------------
 # Suppress repeats of the same continuous condition for this long.

@@ -9,6 +9,9 @@ import { getEngine, useSim } from "@/sim/store";
 import { SEVERITY } from "@/lib/format";
 import { getOverlayNode, registerOverlay } from "./overlayBus";
 
+/** Stable empty array: a selector must never build a fresh one. */
+const NO_OVERLAYS: TrackedOverlay[] = [];
+
 /* ------------------------------------------------------------------ */
 /* In-canvas projector                                                 */
 /* ------------------------------------------------------------------ */
@@ -231,7 +234,7 @@ function OverlayCard({ o }: { o: TrackedOverlay }) {
  * changes (10 Hz at most); positions are driven entirely by OverlayProjector.
  */
 export function DetectionOverlayLayer() {
-  const overlays = useSim((s) => s.snap?.overlays ?? []);
+  const overlays = useSim((s) => s.snap?.overlays ?? NO_OVERLAYS);
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden">
       {overlays.map((o) => (

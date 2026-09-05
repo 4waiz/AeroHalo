@@ -140,16 +140,23 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
     score = 0
     reasons = []
     force_hold = False
+    # Some conditions must raise the LEVEL even though their weight alone lands
+    # inside a lower band. A predicted boundary entry scores 25, which is in the
+    # 0-29 SAFE band - showing SAFE while predicting entry would defeat the
+    # entire point of the system, so the level gets a floor.
+    force_caution = False
+    # Which condition forced the interlock. Reported separately so the HOLD
+    # banner names the real cause instead of whatever happens to be first.
+    force_reason = ""
 
     # --- proximity -------------------------------------------------------
     if rng["valid"]:
         if rng["critical"]:
             score += RISK_CRITICAL_RANGE
             force_hold = True
-            reasons.append(
-                "Object inside %.0f cm exclusion boundary (%.1f cm)"
-                % (CRITICAL_MM / 10, rng["distance_cm"])
-            )
+            force_reason = ("Object inside %.0f cm exclusion boundary (%.1f cm)"
+                            % (CRITICAL_MM / 10, rng["distance_cm"]))
+            reasons.append(force_reason)
         elif rng["caution"]:
             score += RISK_PROXIMITY_CAUTION
             reasons.append(
@@ -164,15 +171,18 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
             if ttz <= PREDICT_HOLD_S:
                 score += RISK_PREDICT_HOLD
                 force_hold = True
-                reasons.append("Predicted boundary entry in %.1f s" % ttz)
+                force_reason = "Predicted boundary entry in %.1f s" % ttz
+                reasons.append(force_reason)
             elif ttz <= PREDICT_CAUTION_S:
                 score += RISK_PREDICT_CAUTION
+                force_caution = True
                 reasons.append("Predicted boundary entry in %.1f s" % ttz)
     else:
         reasons.append("No echo from HC-SR04: range unknown")
         if range_unknown_too_long:
             force_hold = True
-            reasons.append("Range unknown for too long: holding")
+            force_reason = "Range lost while a target was near the boundary"
+            reasons.append(force_reason)
 
     # --- personnel -------------------------------------------------------
     # Presence only. This sensor cannot identify anyone and we do not claim it.
@@ -185,7 +195,8 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
     if vibration_event:
         score += RISK_VIBRATION
         force_hold = True
-        reasons.append("Abnormal vibration detected: possible impact, inspection required")
+        force_reason = "Abnormal vibration: possible impact, inspection required"
+        reasons.append(force_reason)
 
     score = max(0, min(100, score))
 
@@ -193,7 +204,7 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
         level = LEVEL_HOLD
     elif score >= BAND_HOLD:
         level = LEVEL_HOLD
-    elif score >= BAND_CAUTION:
+    elif score >= BAND_CAUTION or force_caution:
         level = LEVEL_CAUTION
     else:
         level = LEVEL_SAFE
@@ -207,6 +218,7 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
         "level": level,
         "reasons": reasons,
         "force_hold": force_hold,
+        "force_reason": force_reason,
     }
 
 
