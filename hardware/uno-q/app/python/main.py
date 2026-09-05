@@ -243,7 +243,7 @@ def post_command(payload: dict, authorization: str = Header(default="")):
             detail="Paste the controller token printed in the board console",
         )
     name = payload.get("command")
-    allowed = {"hold", "clear_after_inspection", "lamp_test"}
+    allowed = {"hold", "clear_after_inspection", "lamp_test", "clear_events"}
     if name not in allowed:
         raise HTTPException(status_code=400, detail="Unknown command")
     try:
@@ -277,8 +277,22 @@ def process_commands():
                 release_pending = True
             elif command == "lamp_test":
                 lamp_test_pending = True
+            elif command == "clear_events":
+                # Clears the VIEW, not the record. events.jsonl on the board is
+                # the durable audit trail and is deliberately left untouched -
+                # a safety log that an operator can erase is not a safety log.
+                # The dedupe map goes with it so a condition that is still
+                # present is re-announced rather than staying invisible.
+                events.clear()
+                _event_seen.clear()
             state["last_command"] = "Queued: " + command
-        add_event("OPERATOR", "Operator command: " + command)
+        if command == "clear_events":
+            add_event(
+                "OPERATOR",
+                "Event log cleared by operator. The record on the board is intact.",
+            )
+        else:
+            add_event("OPERATOR", "Operator command: " + command)
 
 
 def loop():

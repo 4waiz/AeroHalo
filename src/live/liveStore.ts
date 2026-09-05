@@ -116,7 +116,9 @@ export const useLive = create<LiveState>((set, get) => ({
             let events = prev.events;
             if (r.state.events?.length) {
               const seen = new Set(prev.events.map(eventKey));
-              const fresh = r.state.events.filter((e) => !seen.has(eventKey(e)));
+              const fresh = r.state.events.filter(
+                (e) => !seen.has(eventKey(e)),
+              );
               if (fresh.length) {
                 events = [...fresh, ...prev.events].slice(0, MAX_EVENTS);
               }
@@ -146,8 +148,7 @@ export const useLive = create<LiveState>((set, get) => ({
           inFlight = false;
         }
       }
-      const delay =
-        get().failures >= BACKOFF_AFTER ? OFFLINE_POLL_MS : POLL_MS;
+      const delay = get().failures >= BACKOFF_AFTER ? OFFLINE_POLL_MS : POLL_MS;
       timer = setTimeout(tick, delay);
     };
     void tick();
@@ -165,6 +166,10 @@ export const useLive = create<LiveState>((set, get) => ({
     set({
       commandPending: false,
       commandNote: r.ok ? r.note : `Rejected: ${r.note}`,
+      // Drop the local mirror straight away rather than waiting up to 100 ms
+      // for the next poll. The board has already emptied its own deque, so
+      // nothing is being hidden here that the next fetch would bring back.
+      ...(r.ok && c === "clear_events" ? { events: [] } : {}),
     });
   },
 }));
@@ -179,7 +184,7 @@ export const UNAVAILABLE = "UNAVAILABLE";
 export function fmtNumber(
   v: number | null | undefined,
   digits: number,
-  unit: string
+  unit: string,
 ): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return UNAVAILABLE;
   return `${v.toFixed(digits)} ${unit}`;
@@ -200,7 +205,7 @@ export function fmtTtz(s: UnoQState | null): string {
 /** How many of the three sensors are genuinely reporting. Never inflated. */
 export function sensorCount(
   s: UnoQState | null,
-  link: LiveLinkState
+  link: LiveLinkState,
 ): { online: number; total: number } {
   if (!s || link === "offline") return { online: 0, total: 3 };
   return { online: s.sensors_online, total: s.sensors_total };

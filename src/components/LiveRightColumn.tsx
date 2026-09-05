@@ -1,6 +1,14 @@
 "use client";
 
-import { AlertTriangle, Bell, Cpu, HardDrive, Info, Radio } from "lucide-react";
+import {
+  AlertTriangle,
+  Bell,
+  Cpu,
+  Eraser,
+  HardDrive,
+  Info,
+  Radio,
+} from "lucide-react";
 import { Panel, PanelLabel } from "./ui";
 import { UNAVAILABLE, fmtNumber, useLive } from "@/live/liveStore";
 import type { UnoQEvent } from "@/hardware/unoq/types";
@@ -84,7 +92,9 @@ export function LiveAlertsPanel() {
                 className="mt-[2px] shrink-0"
                 style={{ color: hold ? "#ff4343" : "#f5a623" }}
               />
-              <span className="text-[11.5px] leading-[1.5] text-[#dce8f1]">{a}</span>
+              <span className="text-[11.5px] leading-[1.5] text-[#dce8f1]">
+                {a}
+              </span>
             </div>
           </div>
         ))}
@@ -112,10 +122,36 @@ function shortTime(utc: string) {
 
 export function LiveEventTimeline() {
   const events = useLive((s) => s.events);
+  const link = useLive((s) => s.link);
+  const send = useLive((s) => s.send);
+  const pending = useLive((s) => s.commandPending);
+  const offline = link === "offline";
 
   return (
-    <Panel className="min-h-0 shrink-0 overflow-hidden px-3.5 pb-3 pt-3" style={{ height: "32%" }}>
-      <PanelLabel>Safety Timeline &middot; Board Event Log</PanelLabel>
+    <Panel
+      className="min-h-0 shrink-0 overflow-hidden px-3.5 pb-3 pt-3"
+      style={{ height: "32%" }}
+    >
+      <PanelLabel
+        right={
+          /* Clears the on-screen log so a demo run starts from a clean slate.
+             The board keeps writing every event to events.jsonl regardless -
+             a safety log an operator can erase would not be a safety log, so
+             this empties the view and records that it happened. */
+          <button
+            type="button"
+            disabled={offline || pending || events.length === 0}
+            onClick={() => void send("clear_events")}
+            title="Clear the on-screen log. The board's events.jsonl record is kept."
+            className="flex items-center gap-1 rounded-[4px] border border-[#1c4a63] bg-[#0b2233] px-2 py-[3px] text-[9px] font-semibold tracking-[0.05em] text-[#7fd8ef] transition-colors hover:bg-[#102d42] disabled:opacity-40"
+          >
+            <Eraser size={10} strokeWidth={2} />
+            CLEAR
+          </button>
+        }
+      >
+        Safety Timeline &middot; Board Event Log
+      </PanelLabel>
       <div className="mt-2 min-h-0 flex-1 space-y-[3px] overflow-y-auto pr-0.5">
         {events.length === 0 && (
           <div className="px-1 py-2 text-[11px] text-[#5d7688]">
@@ -165,7 +201,10 @@ function Tile({
       <span className="mb-1.5 text-[#7d97ab]">{icon}</span>
       <span
         className="tnum font-bold leading-none"
-        style={{ fontSize: missing ? 11 : 17, color: missing ? "#5d7688" : "#f3f7fa" }}
+        style={{
+          fontSize: missing ? 11 : 17,
+          color: missing ? "#5d7688" : "#f3f7fa",
+        }}
       >
         {missing ? "N/A" : value}
       </span>
@@ -188,14 +227,21 @@ export function LiveSystemSummaryPanel() {
       <div className="mt-2 grid grid-cols-4 gap-2">
         <Tile
           icon={<Radio size={14} strokeWidth={2} />}
-          value={connected ? `${state!.sensors_online} / ${state!.sensors_total}` : "0 / 3"}
+          value={
+            connected
+              ? `${state!.sensors_online} / ${state!.sensors_total}`
+              : "0 / 3"
+          }
           label="SENSORS ONLINE"
         />
         <Tile
           icon={<Cpu size={14} strokeWidth={2} />}
           value={
             connected
-              ? fmtNumber(state?.range.sample_rate_hz ?? null, 1, "Hz").replace(" Hz", "")
+              ? fmtNumber(state?.range.sample_rate_hz ?? null, 1, "Hz").replace(
+                  " Hz",
+                  "",
+                )
               : UNAVAILABLE
           }
           label="MCU SAMPLE RATE (Hz)"
@@ -203,7 +249,8 @@ export function LiveSystemSummaryPanel() {
         <Tile
           icon={<Info size={14} strokeWidth={2} />}
           value={
-            state?.bridge_roundtrip_ms === null || state?.bridge_roundtrip_ms === undefined
+            state?.bridge_roundtrip_ms === null ||
+            state?.bridge_roundtrip_ms === undefined
               ? UNAVAILABLE
               : `${Math.round(state.bridge_roundtrip_ms)}`
           }

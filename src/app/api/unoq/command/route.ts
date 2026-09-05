@@ -4,7 +4,12 @@ import { boardFetch, currentToken, offlinePayload } from "../config";
 export const dynamic = "force-dynamic";
 
 /** The board rejects anything else; mirroring the list here fails fast. */
-const ALLOWED = new Set(["hold", "clear_after_inspection", "lamp_test"]);
+const ALLOWED = new Set([
+  "hold",
+  "clear_after_inspection",
+  "lamp_test",
+  "clear_events",
+]);
 
 /**
  * POST /api/unoq/command -> board POST /api/command
@@ -19,7 +24,10 @@ export async function POST(req: Request) {
   try {
     ({ command } = (await req.json()) as { command?: unknown });
   } catch {
-    return NextResponse.json({ detail: "Malformed JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { detail: "Malformed JSON body" },
+      { status: 400 },
+    );
   }
 
   if (typeof command !== "string" || !ALLOWED.has(command)) {
@@ -35,7 +43,7 @@ export async function POST(req: Request) {
           "No controller token. Run `npm run unoq:token` to capture the " +
           "current one from the board.",
       },
-      { status: 503 }
+      { status: 503 },
     );
   }
 
@@ -50,7 +58,7 @@ export async function POST(req: Request) {
         },
         body: JSON.stringify({ command }),
       },
-      4000
+      4000,
     );
     const body = await res.json().catch(() => ({}));
     return NextResponse.json(body, { status: res.status });

@@ -46,7 +46,8 @@ export async function pollState(timeoutMs = 2000): Promise<LivePollResult> {
       state.telemetry_age_s === null ? Infinity : state.telemetry_age_s * 1000;
 
     let link: LivePollResult["link"];
-    if (!state.hardware_connected || ageMs >= OFFLINE_AFTER_MS) link = "offline";
+    if (!state.hardware_connected || ageMs >= OFFLINE_AFTER_MS)
+      link = "offline";
     else if (ageMs >= STALE_AFTER_MS) link = "stale";
     else link = "online";
 
@@ -63,19 +64,20 @@ export async function pollState(timeoutMs = 2000): Promise<LivePollResult> {
 }
 
 export async function fetchEvents(
-  timeoutMs = 3000
+  timeoutMs = 3000,
 ): Promise<{ events: UnoQEvent[]; storage: string } | null> {
   try {
     return await getJson<{ events: UnoQEvent[]; storage: string }>(
       "/api/unoq/events",
-      timeoutMs
+      timeoutMs,
     );
   } catch {
     return null;
   }
 }
 
-export type UnoQCommand = "hold" | "clear_after_inspection" | "lamp_test";
+export type UnoQCommand =
+  "hold" | "clear_after_inspection" | "lamp_test" | "clear_events";
 
 export interface CommandResult {
   ok: boolean;
@@ -89,7 +91,7 @@ export interface CommandResult {
  */
 export async function sendCommand(
   command: UnoQCommand,
-  timeoutMs = 4000
+  timeoutMs = 4000,
 ): Promise<CommandResult> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -105,7 +107,10 @@ export async function sendCommand(
       detail?: string;
     };
     if (!res.ok) {
-      return { ok: false, note: body.detail ?? `${res.status} ${res.statusText}` };
+      return {
+        ok: false,
+        note: body.detail ?? `${res.status} ${res.statusText}`,
+      };
     }
     return { ok: true, note: body.note ?? "Queued on the board" };
   } catch (err) {
