@@ -36,10 +36,18 @@ booting or the cable is charge-only.
 
 ### `npm run unoq:start`
 
-Starts the AeroHalo application on the board. This compiles the MCU sketch,
-flashes it over the on-board SWD, and launches the Python service.
+Pushes this repository's copy of the app to the board, compiles the MCU sketch,
+flashes it over the on-board SWD, launches the Python service, then waits until
+the service actually answers before reporting success.
 
-Takes 30–60 seconds. You'll see `aerohalo-flash: wrote ... on attempt 1`.
+Takes 30–60 seconds. You'll see `aerohalo-flash: wrote ... on attempt 1` and
+then `App serving. connected=true ...`.
+
+**The repo is the source of truth**, so this is self-healing: if the board copy
+is missing or damaged it is simply rewritten. Two `app restart` calls landing at
+once once deleted the board's app directory outright, and the symptom was a
+confusing `Error Finding Build Artifacts ... .cache/sketch: No such file or
+directory`. Re-running this command fixes that completely.
 
 ### `npm run unoq:token`
 
@@ -102,6 +110,8 @@ around that check from the laptop side, by design.
 | What you see | What it means | Fix |
 |---|---|---|
 | `UNO Q OFFLINE` | board unplugged, rebooted, or app stopped | `npm run unoq:token` (restarts adb, re-links), then `npm run unoq:start` if needed |
+| `Error Finding Build Artifacts` | the board's app directory was damaged | `npm run unoq:start` — it redeploys from the repo |
+| `adb is not recognized` | adb is not on your PATH | you never need it directly; use the npm scripts, which find it themselves |
 | `TELEMETRY STALE` | Linux is up, MCU has gone quiet | `npm run unoq:start` — it reflashes the sketch |
 | `RANGE NO ECHO` | nothing in front of the sensor, or aimed past everything | put a flat target 30–80 cm away, square to it |
 | `PIR OUTPUT HELD` | the SR501's delay pot is holding its output high | normal; it stops counting toward the score after 60 s. Turn the delay pot down if you want it snappier |

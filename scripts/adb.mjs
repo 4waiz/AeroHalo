@@ -41,7 +41,12 @@ export const ADB = findAdb();
 /** Run adb, returning stdout or null. Never throws. */
 export function adb(args, { quiet = false } = {}) {
   try {
-    return execFileSync(ADB, args, { encoding: "utf8" });
+    // stderr is discarded when quiet: `adb push` writes its per-file transfer
+    // rate there, which is noise when pushing a handful of small files.
+    return execFileSync(ADB, args, {
+      encoding: "utf8",
+      stdio: quiet ? ["ignore", "pipe", "ignore"] : ["ignore", "pipe", "pipe"],
+    });
   } catch (err) {
     if (!quiet) console.error(`adb ${args.join(" ")} failed: ${err.message}`);
     return null;

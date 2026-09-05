@@ -37,7 +37,7 @@ if (online.length === 0) {
   fail(
     "No UNO Q on ADB.\n" +
       "  Connect the board by USB-C, wait for it to finish booting, then rerun.\n" +
-      "  `adb devices` should list one device in state `device`."
+      "  Then run this again; it restarts the adb server for you."
   );
 }
 
@@ -90,7 +90,7 @@ if (process.argv.includes("--token")) {
     console.log("No dev-server restart needed: it is re-read on every command.");
   } else {
     console.log("\nNo controller token file on the board yet.");
-    console.log(`  Is the app running?  adb shell arduino-app-cli app start ${APP}`);
+    console.log("  Start the app first:  npm run unoq:start");
   }
 }
 
