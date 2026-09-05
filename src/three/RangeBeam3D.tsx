@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import * as THREE from "three";
@@ -35,6 +35,81 @@ const COLOUR = {
   UNKNOWN: "#7d97ab",
 } as const;
 
+/**
+ * A simple standing figure, ~1.8 m tall, built from primitives.
+ *
+ * Deliberately procedural: no GLB to download, nothing to license, and it
+ * silhouettes cleanly at the distance the apron camera views it from. The
+ * emissive tint carries the zone colour so the figure reads at a glance -
+ * green outside the boundaries, amber inside caution, red inside critical.
+ */
+function Figure({ colour, scale: s }: { colour: string; scale: number }) {
+  // 1.8 m person against an aircraft whose half-span is metres: the apron
+  // camera sits far enough back that finer detail would not survive anyway.
+  const h = 1.8 * s;
+
+  // One material shared by every limb. Declaring <meshStandardMaterial/> inside
+  // each mesh would build eight separate materials per frame-tree and leak one
+  // set per colour change; this disposes and rebuilds only when the zone
+  // colour actually changes.
+  const mat = useMemo(() => {
+    const m = new THREE.MeshStandardMaterial({
+      color: colour,
+      emissive: colour,
+      emissiveIntensity: 0.85,
+      roughness: 0.45,
+      metalness: 0.05,
+    });
+    return m;
+  }, [colour]);
+
+  useEffect(() => () => mat.dispose(), [mat]);
+
+  return (
+    <group>
+      {/* head */}
+      <mesh position={[0, h * 0.92, 0]} material={mat} castShadow>
+        <sphereGeometry args={[h * 0.075, 14, 12]} />
+      </mesh>
+      {/* neck */}
+      <mesh position={[0, h * 0.845, 0]} material={mat}>
+        <cylinderGeometry args={[h * 0.028, h * 0.032, h * 0.06, 8]} />
+      </mesh>
+      {/* torso, tapered toward the waist */}
+      <mesh position={[0, h * 0.66, 0]} material={mat} castShadow>
+        <cylinderGeometry args={[h * 0.085, h * 0.105, h * 0.32, 10]} />
+      </mesh>
+      {/* hips */}
+      <mesh position={[0, h * 0.49, 0]} material={mat}>
+        <cylinderGeometry args={[h * 0.085, h * 0.075, h * 0.1, 10]} />
+      </mesh>
+      {/* arms, held slightly away from the body so the silhouette reads */}
+      {[-1, 1].map((side) => (
+        <mesh
+          key={`arm${side}`}
+          position={[side * h * 0.115, h * 0.64, 0]}
+          rotation={[0, 0, side * 0.13]}
+          material={mat}
+          castShadow
+        >
+          <capsuleGeometry args={[h * 0.032, h * 0.34, 4, 8]} />
+        </mesh>
+      ))}
+      {/* legs */}
+      {[-1, 1].map((side) => (
+        <mesh
+          key={`leg${side}`}
+          position={[side * h * 0.05, h * 0.24, 0]}
+          material={mat}
+          castShadow
+        >
+          <capsuleGeometry args={[h * 0.042, h * 0.4, 4, 8]} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 export function RangeBeam3D({ af }: { af: Airframe }) {
   const s = af.worldScale;
   const state = useLive((v) => v.state);
@@ -43,7 +118,21 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
   const valid = !!state?.range.valid && link === "online";
   const cm = valid ? (state?.range.distance_cm ?? null) : null;
   const status = link === "offline" || !state ? "UNKNOWN" : state.risk.state;
-  const colour = COLOUR[status];
+
+  // The figure is coloured by the band it is standing in, NOT by the fused
+  // system state. Those differ on purpose: a HOLD latched by a vibration event
+  // minutes ago should not paint a target sitting safely at 70 cm red. Where
+  // the object is, and what the system has decided, are two different facts,
+  // and the HUD carries the second one.
+  const bandColour =
+    cm === null
+      ? COLOUR.UNKNOWN
+      : cm <= CRITICAL_CM
+        ? COLOUR.HOLD
+        : cm <= CAUTION_CM
+          ? COLOUR.CAUTION
+          : COLOUR.SAFE;
+  const colour = bandColour;
 
   /** Geometry of the lane, in world metres. */
   const geom = useMemo(() => {
@@ -179,24 +268,21 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
         </Text>
       </group>
 
-      {/* live marker: only rendered when the sensor actually has a reading */}
+      {/* Live marker, only rendered when the sensor actually has a reading.
+          Drawn as a figure because in this demonstration the thing approaching
+          the stand is a person - but see the caption: the HC-SR04 detects an
+          OBJECT at a distance, it does not classify what that object is. The
+          figure is a representation of the measurement, not a claim about it. */}
       <group ref={marker} position={[xFar, 0, geom.laneZ]}>
-        <mesh position={[0, 1.5 * s, 0]}>
-          <cylinderGeometry args={[0.17 * s, 0.17 * s, 3 * s, 12]} />
-          <meshStandardMaterial
-            color={colour}
-            emissive={colour}
-            emissiveIntensity={1.5}
-            transparent
-            opacity={0.9}
-          />
-        </mesh>
+        <Figure colour={colour} scale={s} />
+
         <mesh ref={ring} position={[0, 0.09 * s, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[0.85 * s, 1.25 * s, 40]} />
           <meshBasicMaterial color={colour} transparent opacity={0.85} depthWrite={false} />
         </mesh>
+
         <Text
-          position={[0, 3.9 * s, 0]}
+          position={[0, 3.4 * s, 0]}
           fontSize={1.05 * s}
           color={colour}
           anchorX="center"
@@ -220,7 +306,7 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
         outlineColor="#04121f"
       >
         {valid
-          ? "RANGE SENSOR BEAM - 1-D measurement, lateral position not sensed"
+          ? "RANGE SENSOR BEAM - object at measured distance. Not classified, lateral position not sensed"
           : link === "offline"
             ? "UNO Q OFFLINE"
             : "NO VALID ECHO - RANGE UNKNOWN"}
