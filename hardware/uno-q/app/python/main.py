@@ -329,7 +329,7 @@ def loop():
         # working PIR output - most likely D8 is on the wrong header pin.
         pir_never_low = not pir_ever_low
         pir_suspect = pir_never_low or (
-            pir_raw_high and pir_high_for > config.PIR_STUCK_AFTER_MS
+            pir_raw_high and pir_high_for > config.PIR_HELD_AFTER_MS
         )
 
         # ---- vibration --------------------------------------------------

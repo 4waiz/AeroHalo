@@ -65,7 +65,7 @@ export function LiveMonitoringView() {
     : pir?.warming_up
       ? { v: "WARMING UP", c: DOT.warn }
       : pir?.suspect_stuck
-        ? { v: "OUTPUT STUCK", c: DOT.warn }
+        ? { v: "OUTPUT HELD", c: DOT.warn }
         : pir?.motion_detected
           ? { v: "MOTION", c: DOT.bad }
           : { v: "CLEAR", c: DOT.ok };

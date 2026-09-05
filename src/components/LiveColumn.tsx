@@ -194,7 +194,7 @@ export function LiveSensorsPanel() {
     : pir?.warming_up
       ? { t: "WARMING UP", c: "#f5a623" }
       : pir?.suspect_stuck
-        ? { t: "OUTPUT STUCK", c: "#f5a623" }
+        ? { t: "OUTPUT HELD", c: "#f5a623" }
         : pir?.motion_detected
           ? { t: "MOTION", c: "#ff4343" }
           : { t: "CLEAR", c: "#31d17c" };
@@ -259,8 +259,8 @@ export function LiveSensorsPanel() {
         />
         {pir?.suspect_stuck && (
           <div className="mt-0.5 text-[9.5px] leading-[1.35] text-[#f5a623]">
-            Held high {Math.round((pir.high_for_ms ?? 0) / 1000)} s. Excluded
-            from the score - turn the module delay pot down.
+            Held {Math.round((pir.high_for_ms ?? 0) / 1000)} s by the delay
+            pot, so it no longer shows current presence. Excluded from the score.
           </div>
         )}
       </div>
