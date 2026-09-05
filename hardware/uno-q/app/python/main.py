@@ -77,6 +77,7 @@ state = {
         "raw_high": False,
         "high_for_ms": 0,
         "suspect_stuck": False,
+        "never_low": False,
         "detail": "Warming up",
     },
     "vibration": {
@@ -322,7 +323,14 @@ def loop():
         # An HC-SR501 output that never falls is its delay potentiometer, not a
         # person standing still for a minute. Flag it rather than reporting
         # continuous personnel presence.
-        pir_suspect = pir_raw_high and pir_high_for > config.PIR_STUCK_AFTER_MS
+        pir_ever_low = bool(s.get("pl", 1))
+        # D8 is pulled down, so a disconnected wire reads LOW. A pin that has
+        # never once been LOW is being driven by something that is not a
+        # working PIR output - most likely D8 is on the wrong header pin.
+        pir_never_low = not pir_ever_low
+        pir_suspect = pir_never_low or (
+            pir_raw_high and pir_high_for > config.PIR_STUCK_AFTER_MS
+        )
 
         # ---- vibration --------------------------------------------------
         vib_calibrated = bool(s.get("bc", 0))
@@ -484,8 +492,11 @@ def loop():
                 hold_reason = ""
 
             last_success = now
-            online = (1 if valid else 0) + (1 if not pir_warming else 0) + (
-                1 if vib_calibrated else 0)
+            online = (
+                (1 if valid else 0)
+                + (1 if (not pir_warming and not pir_suspect) else 0)
+                + (1 if vib_calibrated else 0)
+            )
 
             state["hardware_connected"] = True
             state["range"].update(
@@ -502,16 +513,19 @@ def loop():
                 detail="HC-SR04 on D6 / D7" if valid else "No echo: range unknown",
             )
             state["pir"].update(
-                online=not pir_warming,
+                online=not pir_warming and not pir_suspect,
                 warming_up=pir_warming,
                 motion_detected=pir_motion,
                 last_trigger_ms=pir_age_ms if pir_seen else None,
                 raw_high=pir_raw_high,
                 high_for_ms=pir_high_for,
                 suspect_stuck=pir_suspect,
+                never_low=pir_never_low,
                 detail=(
                     "Warming up" if pir_warming
-                    else "Output held high for %.0f s: check the module delay pot"
+                    else "Pin never LOW since boot: D8 may not be on the OUT pin"
+                         if pir_never_low
+                    else "Output held high %.0f s: check the module delay pot"
                          % (pir_high_for / 1000.0) if pir_suspect
                     else "Motion detected" if pir_motion
                     else "Clear"),

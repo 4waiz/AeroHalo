@@ -122,6 +122,12 @@ bool pirEverTriggered = false;
  * dashboard tell the difference instead of crying wolf. */
 int pirRaw = LOW;
 unsigned long pirHighSinceMs = 0;
+/* Has the pin EVER been observed LOW? D8 is configured INPUT_PULLDOWN, so a
+ * disconnected wire reads LOW. A pin that is HIGH from the first sample and
+ * never falls is therefore being actively driven - which for a working
+ * HC-SR501 output it should not be. This distinguishes "sensor is busy" from
+ * "D8 is not looking at the sensor output at all". */
+bool pirEverLow = false;
 
 /* ---------------- vibration ---------------- */
 bool vibCalibrated = false;
@@ -260,6 +266,7 @@ void samplePir() {
     if (pirRaw == LOW) pirHighSinceMs = now;   // rising edge
   } else {
     pirHighSinceMs = 0;
+    pirEverLow = true;
   }
   pirRaw = level;
 
@@ -411,7 +418,7 @@ String read_sensors() {
     "{\"s\":%lu,\"t\":%lu,\"a\":%lu,\"d\":%d,\"w\":%d,\"v\":%d,\"h\":%d,"
     "\"l\":%d,\"x\":%d,\"p\":%d,\"pw\":%d,\"pt\":%lu,\"b\":%d,\"be\":%d,"
     "\"bt\":%lu,\"bc\":%d,\"bi\":%d,\"g\":%d,\"y\":%d,\"r\":%d,\"bq\":%d,"
-    "\"pr\":%d,\"ph\":%lu,"
+    "\"pr\":%d,\"ph\":%lu,\"pl\":%d,"
     "\"sv\":%d,\"st\":%d}",
     sequenceNo, sampledMs, (unsigned long)(now - sampledMs),
     filteredMm, rawMm, rangeValid ? 1 : 0, holdLatched ? 1 : 0,
@@ -423,6 +430,7 @@ String read_sensors() {
     buttonRequest ? 1 : 0,
     pirRaw == HIGH ? 1 : 0,
     pirHighSinceMs ? (unsigned long)(now - pirHighSinceMs) : 0UL,
+    pirEverLow ? 1 : 0,
     ENABLE_SERVO ? 1 : 0,
     ledSelfTestDone ? 1 : 0);
   return String(out);
