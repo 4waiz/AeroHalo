@@ -1,0 +1,3 @@
+# Arduino App Lab supplies arduino.app_utils, WebUI and FastAPI through its
+# Bricks (see app.yaml). Nothing extra is required, and nothing here should be
+# pip-installed on the laptop.

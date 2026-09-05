@@ -1,0 +1,32 @@
+# AeroHalo Range - MCU build profile. Verified building on the UNO Q itself.
+#
+# Root cause of "fatal error: MsgPack.h: No such file or directory":
+#   zephyr core 0.51.0 BUNDLES Arduino_RouterBridge (0.2.2) and Arduino_RPCLite
+#   (0.2.0) but NOT MsgPack. Arduino_RPCLite does `#include <MsgPack.h>`, and
+#   MsgPack is a third-party library (hideakitai) that was never installed.
+#   `arduino-cli lib list` on the board reported "No libraries installed".
+#
+# Fix: declare MsgPack and its own transitive dependencies here. The board image
+# already ships all four archives in ~/.arduino15/staging/libraries, so they
+# install with no network access, which matters because the venue Wi-Fi has a
+# captive portal that MITMs TLS to downloads.arduino.cc.
+#
+# Arduino_RouterBridge / Arduino_RPCLite are deliberately NOT listed: they ship
+# inside the core, and declaring them would shadow the core-matched 0.2.2 with a
+# newer 0.4.x and risk an API mismatch.
+#
+# `platform:` is deliberately left UNVERSIONED. Pinning "arduino:zephyr (0.51.0)"
+# makes arduino-cli re-verify the platform against the remote package index; on
+# the captive-portal network that HEAD request fails TLS and the whole build
+# aborts with "Platform 'arduino:zephyr' not found: platform not installed".
+profiles:
+  default:
+    fqbn: arduino:zephyr:unoq
+    platforms:
+      - platform: arduino:zephyr
+    libraries:
+      - MsgPack (0.4.2)
+      - ArxContainer (0.7.0)
+      - ArxTypeTraits (0.3.2)
+      - DebugLog (0.8.4)
+default_profile: default

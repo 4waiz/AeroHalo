@@ -3,6 +3,7 @@
 import { Activity, Cloud } from "lucide-react";
 import { useSim } from "@/sim/store";
 import { formatUtc } from "@/lib/format";
+import { useLive } from "@/live/liveStore";
 
 /** AeroHalo mark: a radar halo sweeping around a nose-on aircraft. */
 function Logo() {
@@ -45,12 +46,72 @@ function Divider() {
   return <span className="mx-3 h-4 w-px bg-[#1b4462]" />;
 }
 
+/**
+ * SIMULATION / LIVE HARDWARE switch.
+ *
+ * The two modes are kept visibly distinct because they make very different
+ * claims: simulation may invent traffic, live may only show what the UNO Q
+ * measured. Judges should always be able to tell which one they are looking at.
+ */
+function ModeSwitch() {
+  const mode = useLive((s) => s.mode);
+  const setMode = useLive((s) => s.setMode);
+
+  const base =
+    "px-3 py-[7px] text-[11px] font-semibold tracking-[0.06em] transition-colors";
+
+  return (
+    <div className="flex overflow-hidden rounded-[5px] border border-[#123c56] bg-[#06182a]">
+      <button
+        type="button"
+        onClick={() => setMode("simulation")}
+        className={`${base} ${
+          mode === "simulation"
+            ? "bg-[#123c56] text-[#dce8f1]"
+            : "text-[#6f8ba0] hover:text-[#a8c2d4]"
+        }`}
+      >
+        SIMULATION
+      </button>
+      <button
+        type="button"
+        onClick={() => setMode("live")}
+        className={`${base} ${
+          mode === "live"
+            ? "bg-[#0d4a3a] text-[#7ff0c0]"
+            : "text-[#6f8ba0] hover:text-[#a8c2d4]"
+        }`}
+      >
+        LIVE HARDWARE
+      </button>
+    </div>
+  );
+}
+
 export function Header() {
   const clock = useSim((s) => s.snap?.clock ?? 0);
   const sensorsOnline = useSim((s) => s.snap?.sensorsOnline ?? 0);
   const sensorsTotal = useSim((s) => s.snap?.sensorsTotal ?? 12);
 
-  const online = sensorsOnline > 0;
+  const mode = useLive((s) => s.mode);
+  const link = useLive((s) => s.link);
+
+  // In LIVE the badge must reflect the actual board link, never the simulated
+  // sensor fleet. A disconnected board reads UNO Q OFFLINE, not SYSTEM ONLINE.
+  const live = mode === "live";
+  const online = live ? link === "online" : sensorsOnline > 0;
+  const badge = live
+    ? link === "online"
+      ? "UNO Q ONLINE"
+      : link === "stale"
+        ? "TELEMETRY STALE"
+        : link === "connecting"
+          ? "CONNECTING"
+          : "UNO Q OFFLINE"
+    : sensorsOnline > 0
+      ? "SYSTEM ONLINE"
+      : "SYSTEM FAULT";
+  const warn = live && link === "stale";
 
   return (
     <header
@@ -83,11 +144,16 @@ export function Header() {
         </div>
       </div>
 
-      {/* right: environment + clock + link state */}
+      {/* right: mode switch + environment + clock + link state */}
       <div className="flex items-center gap-2.5">
+        <ModeSwitch />
+
         <div className="flex items-center rounded-[5px] border border-[#123c56] bg-[#06182a] px-3.5 py-[9px]">
           <Cloud size={15} className="mr-2 text-[#8fa7b8]" strokeWidth={1.7} />
-          <span className="tnum text-[13.5px] font-medium text-[#dce8f1]">24°C</span>
+          {/* No weather sensor is wired, so LIVE declines to state a temperature. */}
+          <span className="tnum text-[13.5px] font-medium text-[#dce8f1]">
+            {live ? "--" : "24°C"}
+          </span>
           <Divider />
           <span className="tnum text-[13.5px] font-medium tracking-[0.01em] text-[#dce8f1]">
             {formatUtc(clock)} UTC
@@ -98,21 +164,37 @@ export function Header() {
           className={`flex items-center gap-2 rounded-[5px] border px-3.5 py-[9px] ${
             online
               ? "border-[#1c5c43] bg-[#061e17]"
-              : "border-[#7a2028] bg-[#1c0c0f]"
+              : warn
+                ? "border-[#7a5a20] bg-[#1c1408]"
+                : "border-[#7a2028] bg-[#1c0c0f]"
           }`}
-          title={`${sensorsOnline}/${sensorsTotal} sensors reporting`}
+          title={
+            live
+              ? "Arduino UNO Q telemetry link"
+              : `${sensorsOnline}/${sensorsTotal} simulated sensors reporting`
+          }
         >
           <Activity
             size={15}
-            className={online ? "text-[#31d17c]" : "text-[#ff4343]"}
+            className={
+              online
+                ? "text-[#31d17c]"
+                : warn
+                  ? "text-[#f5a623]"
+                  : "text-[#ff4343]"
+            }
             strokeWidth={2}
           />
           <span
             className={`text-[12.5px] font-semibold tracking-[0.06em] ${
-              online ? "text-[#31d17c]" : "text-[#ff5a5a]"
+              online
+                ? "text-[#31d17c]"
+                : warn
+                  ? "text-[#f5a623]"
+                  : "text-[#ff5a5a]"
             }`}
           >
-            {online ? "SYSTEM ONLINE" : "SYSTEM FAULT"}
+            {badge}
           </span>
         </div>
       </div>

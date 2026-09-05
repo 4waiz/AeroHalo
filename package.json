@@ -9,7 +9,10 @@
     "start": "next start -p 3000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "optimize:models": "node scripts/optimize-models.mjs"
+    "optimize:models": "node scripts/optimize-models.mjs",
+    "unoq:link": "node scripts/unoq-link.mjs",
+    "unoq:token": "node scripts/unoq-link.mjs --token",
+    "test:hardware": "python hardware/uno-q/tests/test_risk.py"
   },
   "dependencies": {
     "@react-three/drei": "10.7.6",

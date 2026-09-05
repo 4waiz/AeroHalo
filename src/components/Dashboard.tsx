@@ -8,10 +8,28 @@ import { MonitoringView } from "./MonitoringView";
 import { LiveAlertsPanel, RiskHeatmapPanel, SystemSummaryPanel } from "./RightColumn";
 import { SimulationControls } from "./SimulationControls";
 import { SimRuntime } from "@/sim/SimRuntime";
+import {
+  LiveOperatorPanel,
+  LiveRangePanel,
+  LiveRiskGaugeCard,
+  LiveSafetyStatusCard,
+  LiveStatusCardGrid,
+} from "./LiveColumn";
+import { LiveMonitoringView } from "./LiveMonitoringView";
+import {
+  LiveAlertsPanel as LiveHardwareAlerts,
+  LiveEventTimeline,
+  LiveSystemSummaryPanel,
+} from "./LiveRightColumn";
+import { useLive } from "@/live/liveStore";
 
 export function Dashboard() {
+  const live = useLive((s) => s.mode === "live");
+
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-[#030b14]">
+      {/* The simulation keeps running behind LIVE so switching back is instant,
+          but none of its output is rendered while LIVE is selected. */}
       <SimRuntime />
       <Header />
 
@@ -21,13 +39,25 @@ export function Dashboard() {
       >
         {/* left */}
         <section
-          className="flex min-h-0 min-w-0 flex-col"
+          className="flex min-h-0 min-w-0 flex-col overflow-y-auto"
           style={{ gap: "var(--pad)" }}
         >
-          <SafetyStatusCard />
-          <RiskGaugeCard />
-          <StatusCardGrid />
-          <AirfieldOverview />
+          {live ? (
+            <>
+              <LiveSafetyStatusCard />
+              <LiveRiskGaugeCard />
+              <LiveRangePanel />
+              <LiveStatusCardGrid />
+              <LiveOperatorPanel />
+            </>
+          ) : (
+            <>
+              <SafetyStatusCard />
+              <RiskGaugeCard />
+              <StatusCardGrid />
+              <AirfieldOverview />
+            </>
+          )}
         </section>
 
         {/* centre */}
@@ -35,8 +65,8 @@ export function Dashboard() {
           className="flex min-h-0 min-w-0 flex-col"
           style={{ gap: "var(--pad)" }}
         >
-          <MonitoringView />
-          <EventTimeline />
+          {live ? <LiveMonitoringView /> : <MonitoringView />}
+          {live ? <LiveEventTimeline /> : <EventTimeline />}
         </section>
 
         {/* right */}
@@ -44,9 +74,18 @@ export function Dashboard() {
           className="flex min-h-0 min-w-0 flex-col"
           style={{ gap: "var(--pad)" }}
         >
-          <LiveAlertsPanel />
-          <RiskHeatmapPanel />
-          <SystemSummaryPanel />
+          {live ? (
+            <>
+              <LiveHardwareAlerts />
+              <LiveSystemSummaryPanel />
+            </>
+          ) : (
+            <>
+              <LiveAlertsPanel />
+              <RiskHeatmapPanel />
+              <SystemSummaryPanel />
+            </>
+          )}
         </section>
       </main>
 

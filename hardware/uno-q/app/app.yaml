@@ -1,0 +1,5 @@
+name: AeroHalo Range
+icon: "\U00002708"
+description: Real ultrasonic telemetry, one-dimensional boundary prediction, and MCU HOLD latch.
+bricks:
+  - arduino:web_ui
