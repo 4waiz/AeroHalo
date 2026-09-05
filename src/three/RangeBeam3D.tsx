@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Text } from "@react-three/drei";
+import { Billboard, Text } from "@react-three/drei";
 import * as THREE from "three";
 import type { Airframe } from "@/sim/aircraftTypes";
 import { useLive } from "@/live/liveStore";
@@ -213,17 +213,18 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
         <boxGeometry args={[0.1 * s, 2.2 * s, 0.1 * s]} />
         <meshStandardMaterial color={c} emissive={c} emissiveIntensity={0.5} />
       </mesh>
-      <Text
-        position={[0, 2.9 * s, geom.halfWidth]}
-        fontSize={0.72 * s}
-        color={c}
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.045 * s}
-        outlineColor="#04121f"
-      >
-        {label}
-      </Text>
+      <Billboard position={[0, 2.9 * s, geom.halfWidth]}>
+        <Text
+          fontSize={0.72 * s}
+          color={c}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.045 * s}
+          outlineColor="#04121f"
+        >
+          {label}
+        </Text>
+      </Billboard>
     </group>
   );
 
@@ -255,17 +256,18 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
           <boxGeometry args={[0.5 * s, 1.5 * s, 1.5 * s]} />
           <meshStandardMaterial color="#123c56" metalness={0.3} roughness={0.6} />
         </mesh>
-        <Text
-          position={[0, 2.35 * s, 0]}
-          fontSize={0.66 * s}
-          color="#7fd8ef"
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.045 * s}
-          outlineColor="#04121f"
-        >
-          HC-SR04
-        </Text>
+        <Billboard position={[0, 2.35 * s, 0]}>
+          <Text
+            fontSize={0.66 * s}
+            color="#7fd8ef"
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.045 * s}
+            outlineColor="#04121f"
+          >
+            HC-SR04
+          </Text>
+        </Billboard>
       </group>
 
       {/* Live marker, only rendered when the sensor actually has a reading.
@@ -281,23 +283,29 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
           <meshBasicMaterial color={colour} transparent opacity={0.85} depthWrite={false} />
         </mesh>
 
-        <Text
-          position={[0, 3.4 * s, 0]}
-          fontSize={1.05 * s}
-          color={colour}
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.06 * s}
-          outlineColor="#04121f"
-        >
-          {cm !== null ? `${cm.toFixed(1)} cm` : ""}
-        </Text>
+        <Billboard position={[0, 3.4 * s, 0]}>
+          <Text
+            fontSize={1.05 * s}
+            color={colour}
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.06 * s}
+            outlineColor="#04121f"
+          >
+            {cm !== null ? `${cm.toFixed(1)} cm` : ""}
+          </Text>
+        </Billboard>
       </group>
 
       {/* honest caption, in the scene rather than only in a side panel */}
+      <Billboard
+        position={[
+          (xFar + geom.boundaryX) / 2,
+          1.2 * s,
+          geom.laneZ + geom.halfWidth + 1.5 * s,
+        ]}
+      >
       <Text
-        position={[(xFar + geom.boundaryX) / 2, 0.09 * s, geom.laneZ + geom.halfWidth + 1.5 * s]}
-        rotation={[-Math.PI / 2, 0, 0]}
         fontSize={0.62 * s}
         color="#8fb4cc"
         anchorX="center"
@@ -311,6 +319,7 @@ export function RangeBeam3D({ af }: { af: Airframe }) {
             ? "UNO Q OFFLINE"
             : "NO VALID ECHO - RANGE UNKNOWN"}
       </Text>
+      </Billboard>
     </group>
   );
 }

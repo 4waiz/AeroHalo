@@ -99,7 +99,12 @@ state = {
         "servo_commanded_state": "disabled",
     },
     "risk": {"score": None, "state": "UNKNOWN", "reasons": []},
-    "hold": {"latched": False, "reason": "", "since": None},
+    # `hazard_cleared` is the difference between "something is wrong RIGHT NOW"
+    # and "something was wrong, it has passed, and a human still has to sign it
+    # off". Both are HOLD, and showing them identically made a screen of green
+    # sensors next to a red verdict look like a contradiction.
+    "hold": {"latched": False, "reason": "", "since": None,
+             "hazard_cleared": False},
 
     "sensors_online": 0,
     "sensors_total": 3,
@@ -576,6 +581,10 @@ def loop():
                 latch_line = "HOLD latched: %s" % (
                     hold_reason or "safety interlock engaged")
                 reasons = [latch_line] + [r for r in reasons if r != latch_line]
+                if range_state == "SAFE" and pir_state == "SAFE" and vib_state == "SAFE":
+                    reasons.append(
+                        "All sensors now read SAFE. The interlock is held open "
+                        "pending operator inspection, not by a live hazard.")
                 reasons.append(
                     "Clear it with Reset after inspection once the zone is verified")
 
@@ -661,10 +670,16 @@ def loop():
                 "state": state_name,
                 "reasons": reasons,
             }
+            all_sensors_safe = (
+                range_state == "SAFE"
+                and pir_state == "SAFE"
+                and vib_state == "SAFE"
+            )
             state["hold"] = {
                 "latched": held,
                 "reason": hold_reason,
                 "since": hold_since,
+                "hazard_cleared": bool(held and all_sensors_safe),
             }
             state["sensors_online"] = online
             state["bridge_roundtrip_ms"] = round((now - started) * 1000, 1)

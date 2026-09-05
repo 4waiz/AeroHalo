@@ -86,6 +86,8 @@ export interface UnoQHold {
   latched: boolean;
   reason: string;
   since: string | null;
+  /** Latched, but every sensor now reads SAFE: awaiting a reset, not a hazard. */
+  hazard_cleared: boolean;
 }
 
 export interface UnoQEvent {

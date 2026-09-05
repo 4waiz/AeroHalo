@@ -39,6 +39,7 @@ export function LiveStatusPanel() {
   const colour = COLOUR[status];
 
   const score = link === "offline" ? null : (state?.risk.score ?? null);
+  const cleared = state?.hold.hazard_cleared ?? false;
   const known = score !== null;
   const offset = ARC * (1 - Math.max(0, Math.min(100, score ?? 0)) / 100);
   const reasons = state?.risk.reasons ?? [];
@@ -58,11 +59,13 @@ export function LiveStatusPanel() {
           <div className="mt-1.5 text-[11px] leading-[1.4] text-[#829bad]">
             {link === "offline"
               ? "UNO Q offline"
-              : status === "HOLD"
-                ? "Interlock latched. Inspect, then reset."
-                : status === "UNKNOWN"
-                  ? "Sensor data unavailable"
-                  : `Risk ${score ?? "--"} / 100`}
+              : status === "HOLD" && cleared
+                ? "All sensors SAFE. Held open pending inspection."
+                : status === "HOLD"
+                  ? "Interlock latched. Inspect, then reset."
+                  : status === "UNKNOWN"
+                    ? "Sensor data unavailable"
+                    : `Risk ${score ?? "--"} / 100`}
           </div>
         </div>
 
@@ -351,6 +354,7 @@ export function LiveOutputsPanel() {
 /* ------------------------------------------------------------------ */
 
 export function LiveOperatorPanel() {
+  const cleared = useLive((s) => s.state?.hold.hazard_cleared ?? false);
   const send = useLive((s) => s.send);
   const pending = useLive((s) => s.commandPending);
   const note = useLive((s) => s.commandNote);
@@ -385,7 +389,11 @@ export function LiveOperatorPanel() {
               void send("clear_after_inspection");
             }
           }}
-          className="rounded-[5px] border border-[#1c4a63] bg-[#0b2233] px-2 py-1.5 text-[11px] font-semibold text-[#7fd8ef] transition-colors hover:bg-[#102d42] disabled:opacity-40"
+          className={`rounded-[5px] border px-2 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+            cleared
+              ? "border-[#31d17c] bg-[#0d2a1e] text-[#7ff0c0] hover:bg-[#123a2a]"
+              : "border-[#1c4a63] bg-[#0b2233] text-[#7fd8ef] hover:bg-[#102d42]"
+          }`}
         >
           Reset after inspection
         </button>

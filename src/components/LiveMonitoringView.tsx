@@ -75,6 +75,7 @@ export function LiveMonitoringView() {
   const vib = useLive((s) => s.state?.vibration);
   const rng = useLive((s) => s.state?.range);
   const risk = useLive((s) => s.state?.risk.state);
+  const cleared = useLive((s) => s.state?.hold.hazard_cleared ?? false);
   const offline = link === "offline";
 
   const linkChip = offline
@@ -162,6 +163,16 @@ export function LiveMonitoringView() {
           >
             {offline ? "UNKNOWN" : (risk ?? "UNKNOWN")}
           </div>
+          {cleared && !offline && (
+            // All sensors read SAFE and the interlock is still set. Saying so
+            // stops a row of green chips beside a red verdict looking like a
+            // bug rather than a latch waiting on a person.
+            <div className="mt-0.5 text-[8.5px] leading-[1.3] tracking-[0.08em] text-[#f5a623]">
+              LATCHED · HAZARD CLEARED
+              <br />
+              AWAITING RESET
+            </div>
+          )}
         </div>
       </div>
 
