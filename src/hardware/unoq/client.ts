@@ -75,7 +75,7 @@ export async function fetchEvents(
   }
 }
 
-export type UnoQCommand = "hold" | "clear_after_inspection";
+export type UnoQCommand = "hold" | "clear_after_inspection" | "lamp_test";
 
 export interface CommandResult {
   ok: boolean;

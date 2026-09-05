@@ -97,6 +97,11 @@ int filteredMm = -1;
 bool rangeValid = false;
 static int history[3] = { -1, -1, -1 };
 static uint8_t historyCount = 0;
+/* Consecutive in-boundary samples before the latch fires. An HC-SR04 emits
+ * occasional nonsense, especially on its first pings after reset, and a single
+ * bogus 5 cm reading would otherwise latch HOLD for the whole demonstration. */
+static uint8_t criticalRun = 0;
+static const uint8_t CRITICAL_RUN_NEEDED = 3;
 static float ema = 0.0f;
 static bool emaReady = false;
 
@@ -127,6 +132,11 @@ bool buttonPrev = true;         // INPUT_PULLUP idles HIGH
 /* ---------------- outputs ---------------- */
 bool ledGreen = false, ledYellow = false, ledRed = false;
 bool ledSelfTestDone = false;   // reported so the dashboard knows the lamp test ran
+/* Operator-triggered lamp test. Non-blocking: updateOutputs() drives the walk
+ * from this timestamp, so the sensor loop and the RPC handlers keep running. */
+unsigned long lampTestStartMs = 0;
+static const unsigned long LAMP_STEP_MS = 500;
+static const unsigned long LAMP_TOTAL_MS = LAMP_STEP_MS * 3;
 
 void writeLeds(bool g, bool y, bool r) {
   ledGreen = g;
@@ -194,6 +204,7 @@ void sampleRange() {
     rangeValid = false;
     filteredMm = -1;
     safeSinceMs = 0;
+    criticalRun = 0;
     return;
   }
 
@@ -214,7 +225,15 @@ void sampleRange() {
   filteredMm = (int)(ema + 0.5f);
   rangeValid = true;
 
-  if (filteredMm <= CRITICAL_MM) holdLatched = true;   // latch, never self-clears
+  /* Latch only once the median+EMA filter is primed AND the boundary has been
+   * breached on consecutive samples. 3 samples at 10 Hz is 300 ms, far too
+   * quick to matter physically but long enough to reject a single bad ping. */
+  if (filteredMm <= CRITICAL_MM && historyCount == 3) {
+    if (criticalRun < 255) criticalRun++;
+    if (criticalRun >= CRITICAL_RUN_NEEDED) holdLatched = true;
+  } else {
+    criticalRun = 0;
+  }
 
   if (filteredMm > RELEASE_MM) {
     if (safeSinceMs == 0) safeSinceMs = sampledMs;
@@ -298,7 +317,9 @@ void sampleButton() {
 
 uint8_t localLevel() {
   if (!rangeValid) return LEVEL_UNKNOWN;
-  if (filteredMm <= CRITICAL_MM) return LEVEL_HOLD;
+  if (filteredMm <= CRITICAL_MM && criticalRun >= CRITICAL_RUN_NEEDED)
+    return LEVEL_HOLD;
+  if (filteredMm <= CRITICAL_MM) return LEVEL_CAUTION;   // confirming
   if (filteredMm <= CAUTION_MM) return LEVEL_CAUTION;
   return LEVEL_SAFE;
 }
@@ -317,6 +338,9 @@ bool apply_command(int level, bool release) {
   buttonRequest = false;
   vibEvent = false;
 
+  /* Only a measured hazard latches. LEVEL_UNKNOWN deliberately does not:
+   * at power-on the sensor has not read anything yet, and latching then would
+   * force an operator reset before the demo could even start. */
   if (remoteLevel == LEVEL_HOLD || localLevel() == LEVEL_HOLD) holdLatched = true;
 
   bool stable = safeSinceMs != 0 &&
@@ -330,6 +354,13 @@ bool apply_command(int level, bool release) {
     remoteLevel = LEVEL_SAFE;
   }
   return holdLatched;   // logic state, NOT physical barrier feedback
+}
+
+/* Linux -> MCU. Starts the non-blocking lamp walk. Returns immediately: the
+ * caller gets "accepted", never "the operator saw it light up". */
+bool lamp_test() {
+  lampTestStartMs = millis();
+  return true;
 }
 
 /* MCU -> Linux. Short keys keep the worst case near 170 bytes, well inside the
@@ -374,6 +405,19 @@ String read_sensors() {
 /* ------------------------------------------------------------------ */
 
 void updateOutputs() {
+  /* An operator lamp test overrides the display for its duration. It only
+   * changes what the LEDs show, never the safety state underneath. */
+  if (lampTestStartMs != 0) {
+    unsigned long elapsed = millis() - lampTestStartMs;
+    if (elapsed < LAMP_TOTAL_MS) {
+      unsigned long step = elapsed / LAMP_STEP_MS;
+      writeLeds(step == 0, step == 1, step == 2);
+      return;
+    }
+    lampTestStartMs = 0;
+    ledSelfTestDone = true;
+  }
+
   /* The MCU latches HOLD by itself if Linux goes quiet. The watchdog is why
    * this is not simply a function of the level Linux last sent. */
   if (linkExpired() && haveCommand) holdLatched = true;
@@ -454,6 +498,7 @@ void setup() {
   Bridge.begin();
   Bridge.provide_safe("read_sensors", read_sensors);
   Bridge.provide_safe("apply_command", apply_command);
+  Bridge.provide_safe("lamp_test", lamp_test);
 }
 
 void loop() {

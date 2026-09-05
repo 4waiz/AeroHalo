@@ -1,15 +1,6 @@
 "use client";
 
-import {
-  Activity,
-  Gauge,
-  Lightbulb,
-  Radio,
-  Ruler,
-  TriangleAlert,
-  User,
-  Waves,
-} from "lucide-react";
+import { Lightbulb, Ruler, TriangleAlert, User, Waves } from "lucide-react";
 import { Panel, PanelLabel } from "./ui";
 import { UNAVAILABLE, fmtNumber, fmtTtz, useLive } from "@/live/liveStore";
 import type { UnoQStatus } from "@/hardware/unoq/types";
@@ -31,10 +22,10 @@ const STATUS_COLOUR: Record<UnoQStatus, string> = {
 };
 
 const STATUS_COPY: Record<UnoQStatus, string> = {
-  SAFE: "All three sensors nominal",
-  CAUTION: "Elevated risk on the monitored boundary",
-  HOLD: "Safety interlock engaged. Inspect, then reset.",
-  UNKNOWN: "Sensor data unavailable. Treat the zone as unverified.",
+  SAFE: "All sensors nominal",
+  CAUTION: "Elevated risk on the boundary",
+  HOLD: "Interlock engaged. Inspect, then reset.",
+  UNKNOWN: "Sensor data unavailable.",
 };
 
 /* ------------------------------------------------------------------ */
@@ -350,9 +341,6 @@ export function LiveRangePanel() {
         />
         <div className="mt-0.5 text-[10.5px] leading-[1.4] text-[#6f8ba0]">
           {offline ? "No telemetry" : (pir?.detail ?? "")}
-          {pir?.warming_up
-            ? " — no personnel alerts are raised during warm-up"
-            : ""}
         </div>
       </div>
 
@@ -397,34 +385,36 @@ function Lamp({ on, colour, label }: { on: boolean; colour: string; label: strin
 export function LiveOutputsPanel() {
   const out = useLive((s) => s.state?.outputs);
   const link = useLive((s) => s.link);
+  const send = useLive((s) => s.send);
+  const pending = useLive((s) => s.commandPending);
   const offline = link === "offline" || !out;
 
   return (
     <Panel className="shrink-0 px-3.5 pb-2.5 pt-3">
-      <PanelLabel>Physical Outputs</PanelLabel>
-      <div className="mt-2 flex items-start justify-between">
-        <div className="flex gap-3.5">
+      <PanelLabel
+        right={
+          <button
+            type="button"
+            disabled={offline || pending}
+            onClick={() => void send("lamp_test")}
+            className="flex items-center gap-1 rounded-[4px] border border-[#1c4a63] bg-[#0b2233] px-2 py-[3px] text-[9.5px] font-semibold tracking-[0.05em] text-[#7fd8ef] transition-colors hover:bg-[#102d42] disabled:opacity-40"
+          >
+            <Lightbulb size={10} strokeWidth={2} />
+            TEST
+          </button>
+        }
+      >
+        Physical Outputs &middot; D3 / D4 / D5
+      </PanelLabel>
+      <div className="mt-2 flex items-center justify-between">
+        <div className="flex gap-4">
           <Lamp on={!offline && out.green_led} colour="#31d17c" label="GREEN" />
           <Lamp on={!offline && out.yellow_led} colour="#f5a623" label="YELLOW" />
           <Lamp on={!offline && out.red_led} colour="#ff4343" label="RED" />
         </div>
-        <div className="text-right">
-          <div className="flex items-center justify-end gap-1.5 text-[10px] text-[#6f8ba0]">
-            <Lightbulb size={11} strokeWidth={2} />
-            {offline
-              ? "no telemetry"
-              : out.self_test_done
-                ? "lamp test ran"
-                : "lamp test pending"}
-          </div>
-          <div className="mt-1 text-[10px] text-[#5d7688]">
-            Servo D9: {offline ? "unknown" : out.servo_commanded_state}
-          </div>
-        </div>
-      </div>
-      <div className="mt-1.5 border-t border-[#12293c] pt-1.5 text-[9.5px] leading-[1.4] text-[#5d7688]">
-        LED states are read back from the MCU, so this mirrors the lights on the
-        table rather than re-deriving them here.
+        <span className="text-[9.5px] text-[#5d7688]">
+          Servo D9 {offline ? "unknown" : out.servo_commanded_state}
+        </span>
       </div>
     </Panel>
   );
@@ -474,12 +464,8 @@ export function LiveOperatorPanel() {
           Reset after inspection
         </button>
       </div>
-      <div className="mt-1.5 min-h-[24px] text-[10px] leading-[1.4] text-[#6f8ba0]">
-        {note || "Commands are queued on the board. Only the MCU confirms them."}
-      </div>
-      <div className="flex items-center gap-1.5 border-t border-[#12293c] pt-1.5 text-[9.5px] text-[#5d7688]">
-        <Gauge size={10} strokeWidth={2} />
-        Tabletop demonstrator. Not certified aviation equipment.
+      <div className="mt-1.5 min-h-[18px] text-[10px] leading-[1.4] text-[#6f8ba0]">
+        {note}
       </div>
     </Panel>
   );
@@ -534,10 +520,6 @@ export function LiveStatusCardGrid() {
             HTTP RTT (ms)
           </div>
         </div>
-      </div>
-      <div className="mt-1.5 flex items-center gap-1.5 border-t border-[#12293c] pt-1.5 text-[9.5px] text-[#5d7688]">
-        <Activity size={10} strokeWidth={2} />
-        MCU link latency. Not a vision or AI latency.
       </div>
     </Panel>
   );

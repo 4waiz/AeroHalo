@@ -159,7 +159,7 @@ function RangeBeam() {
           RANGE SENSOR BEAM
         </text>
         <text x={PAD_L} y={52} fill="#5d7688" style={{ fontSize: 11 }}>
-          One-dimensional distance along the sensor axis. Lateral position is not measured.
+          1-D distance along the sensor axis. Lateral position is not measured.
         </text>
       </svg>
     </div>

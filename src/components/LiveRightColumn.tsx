@@ -215,12 +215,6 @@ export function LiveSystemSummaryPanel() {
           label="HTTP ROUND TRIP (ms)"
         />
       </div>
-      <div className="mt-2 border-t border-[#12293c] pt-1.5 text-[10px] leading-[1.5] text-[#5d7688]">
-        Three real sensors: HC-SR04 range, HC-SR501 personnel, SW-420 vibration.
-        No AI accuracy figure is shown because nothing in this build measures
-        model accuracy. Bridge round trip is MCU link latency, not vision latency.
-        {state?.storage ? ` Event storage: ${state.storage}.` : ""}
-      </div>
     </Panel>
   );
 }

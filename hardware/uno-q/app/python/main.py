@@ -105,12 +105,16 @@ last_success = 0.0
 last_valid_at = 0.0
 manual_request = False
 release_pending = False
+lamp_test_pending = False
 hold_since = None
 hold_reason = ""
 
 sample_count = 0
 rate_window_start = 0.0
 last_seen_seq = None
+# Consecutive valid samples. A stray echo off an empty room is not a "track",
+# so losing it must not be treated as losing a target we were following.
+valid_run = 0
 
 # Event de-duplication: key -> monotonic time it was last emitted.
 _event_seen = {}
@@ -203,7 +207,7 @@ def post_command(payload: dict, authorization: str = Header(default="")):
             detail="Paste the controller token printed in the board console",
         )
     name = payload.get("command")
-    allowed = {"hold", "clear_after_inspection"}
+    allowed = {"hold", "clear_after_inspection", "lamp_test"}
     if name not in allowed:
         raise HTTPException(status_code=400, detail="Unknown command")
     try:
@@ -223,7 +227,7 @@ ui.expose_api("POST", "/api/command", post_command)
 
 
 def process_commands():
-    global manual_request, release_pending
+    global manual_request, release_pending, lamp_test_pending
     while True:
         try:
             command = commands.get_nowait()
@@ -235,13 +239,16 @@ def process_commands():
                 release_pending = False
             elif command == "clear_after_inspection":
                 release_pending = True
+            elif command == "lamp_test":
+                lamp_test_pending = True
             state["last_command"] = "Queued: " + command
         add_event("OPERATOR", "Operator command: " + command)
 
 
 def loop():
     global last_success, last_valid_at, manual_request, release_pending
-    global sample_count, rate_window_start, last_seen_seq
+    global sample_count, rate_window_start, last_seen_seq, lamp_test_pending
+    global valid_run
     global _last_state_key, _pir_announced, _vib_announced, _range_announced
     global hold_since, hold_reason
 
@@ -262,13 +269,23 @@ def loop():
         # ---- range ------------------------------------------------------
         valid = bool(s["v"]) and 20 <= s["d"] <= 4000 and s["a"] <= 500
         if valid:
-            last_valid_at = now
+            valid_run += 1
+            # Only a sustained track arms the "signal lost" escalation. Half a
+            # second of consecutive echoes means something is really there.
+            if valid_run >= config.VALID_RUN_FOR_TRACK:
+                last_valid_at = now
+        else:
+            valid_run = 0
         speed = tracker.update(s["s"], s["t"], s["d"], valid)
         rng = range_assessment(s["d"] if valid else None, speed, valid)
 
+        # Escalate to HOLD only if the range WAS valid and then went away.
+        # Before the first ever reading the correct answer is UNKNOWN, not HOLD:
+        # latching at power-on would force an operator reset before the
+        # demonstration could even begin.
         since_valid = now - last_valid_at if last_valid_at else None
         range_unknown_too_long = (
-            since_valid is None or since_valid > config.INVALID_HOLD_AFTER_S
+            since_valid is not None and since_valid > config.INVALID_HOLD_AFTER_S
         )
 
         # ---- PIR --------------------------------------------------------
@@ -325,6 +342,18 @@ def loop():
             else:
                 release = True
             release_pending = False
+
+        # ---- operator lamp test -----------------------------------------
+        # Issued from the main loop like every other MCU call, so there is one
+        # controlled path to the Bridge and no overlapping RPCs.
+        if lamp_test_pending:
+            lamp_test_pending = False
+            try:
+                Bridge.call("lamp_test", timeout=config.MCU_TIMEOUT_S)
+                state["last_command"] = "Lamp test commanded (watch the LEDs)"
+                add_event("INFO", "Lamp test commanded: green, yellow, red")
+            except Exception as exc:  # noqa: BLE001
+                state["last_command"] = "Lamp test failed: %s" % exc
 
         # ---- command the MCU --------------------------------------------
         held = bool(

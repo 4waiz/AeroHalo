@@ -38,6 +38,10 @@ MCU_TIMEOUT_S = 1.0        # Bridge call timeout
 # A single missed echo is normal for an HC-SR04. Only a sustained loss is
 # treated as a hazard, so transient dropouts read UNKNOWN rather than HOLD.
 INVALID_HOLD_AFTER_S = 1.5
+# Consecutive valid samples before we consider the sensor to be tracking
+# something. Below this, an isolated echo off an empty room is just noise, and
+# losing it must not escalate to HOLD.
+VALID_RUN_FOR_TRACK = 5
 
 # --- events ----------------------------------------------------------------
 # Suppress repeats of the same continuous condition for this long.
