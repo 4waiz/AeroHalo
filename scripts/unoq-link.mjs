@@ -1,76 +1,37 @@
 #!/usr/bin/env node
 /**
- * Establish and verify the laptop -> Arduino UNO Q link, then print the
- * controller token line the dashboard needs.
+ * Establish and verify the laptop -> Arduino UNO Q link.
  *
- *   node scripts/unoq-link.mjs          set up the forward and report status
- *   node scripts/unoq-link.mjs --token  also print the current controller token
+ *   npm run unoq:link     set up the forward and report board status
+ *   npm run unoq:token    the above, and capture the controller token
  *
  * Why adb and not the board's LAN address:
  * The UNO Q joins the venue Wi-Fi and gets a real address, but the network
- * isolates clients, so the laptop cannot reach the board over Wi-Fi at all
- * (ping and every port time out). The USB ADB link is already authorised and
- * is the transport that actually works, so we forward the App Lab web_ui port
- * to localhost and point the dashboard at that.
+ * isolates clients, so the laptop cannot reach the board over Wi-Fi at all -
+ * ping and every port time out. The USB ADB link is already authorised and is
+ * the transport that actually works, so the App Lab web_ui port is forwarded to
+ * localhost and the dashboard points at that.
  *
  * This deliberately does not scan the network and does not touch the firewall.
  */
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
+import { adb, devicesWithRetry } from "./adb.mjs";
 
 const PORT = Number(process.env.AEROHALO_UNOQ_PORT ?? 7000);
-
-/** adb is not on PATH by default on Windows; check the usual places. */
-function findAdb() {
-  if (process.env.ADB_PATH && existsSync(process.env.ADB_PATH)) {
-    return process.env.ADB_PATH;
-  }
-  const candidates = [
-    `${process.env.LOCALAPPDATA ?? ""}\\Android\\Sdk\\platform-tools\\adb.exe`,
-    `${process.env.USERPROFILE ?? ""}\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe`,
-    "/usr/local/bin/adb",
-    "/usr/bin/adb",
-    "adb",
-  ];
-  for (const c of candidates) {
-    if (c === "adb") return c;
-    if (c && existsSync(c)) return c;
-  }
-  return "adb";
-}
-
-const ADB = findAdb();
-
-function adb(args, { quiet = false } = {}) {
-  try {
-    return execFileSync(ADB, args, { encoding: "utf8" });
-  } catch (err) {
-    if (!quiet) {
-      console.error(`adb ${args.join(" ")} failed: ${err.message}`);
-    }
-    return null;
-  }
-}
+const APP = "user:aerohalo_range";
+const TOKEN_FILE =
+  "/home/arduino/ArduinoApps/aerohalo_range/data/controller_token";
 
 function fail(msg) {
   console.error(`\n  ${msg}\n`);
   process.exit(1);
 }
 
-const devices = adb(["devices"]);
-if (devices === null) {
-  fail(
-    "Could not run adb. Set ADB_PATH to your adb executable and try again."
-  );
-}
+/* ---- 1. is the board there? ------------------------------------------- */
 
-const online = devices
-  .split("\n")
-  .slice(1)
-  .map((l) => l.trim())
-  .filter((l) => l.endsWith("\tdevice"))
-  .map((l) => l.split("\t")[0]);
+const online = devicesWithRetry();
 
 if (online.length === 0) {
   fail(
@@ -82,9 +43,12 @@ if (online.length === 0) {
 
 console.log(`UNO Q on ADB: ${online[0]}`);
 
-// Idempotent: re-running just re-asserts the same forward.
-adb(["forward", `tcp:${PORT}`, `tcp:${PORT}`]);
+/* ---- 2. forward the port ---------------------------------------------- */
+
+adb(["forward", `tcp:${PORT}`, `tcp:${PORT}`]);   // idempotent
 console.log(`Forward: localhost:${PORT} -> board ${PORT}`);
+
+/* ---- 3. is the app actually serving? ---------------------------------- */
 
 const res = await fetch(`http://127.0.0.1:${PORT}/api/state`, {
   cache: "no-store",
@@ -93,31 +57,41 @@ const res = await fetch(`http://127.0.0.1:${PORT}/api/state`, {
 if (!res.ok) {
   fail(
     `Forward is up but the board is not serving on ${PORT}.\n` +
-      `  Start the app:  adb shell arduino-app-cli app start user:aerohalo_range\n` +
+      `  Start the app:  adb shell arduino-app-cli app start ${APP}\n` +
       `  Reason: ${res.statusText ?? "unknown"}`
   );
 }
 
-const state = await res.json();
+const s = await res.json();
+const r = s.range ?? {};
 console.log(
-  `Board app responding. connected=${state.connected} status=${state.status} ` +
-    `distance_cm=${state.distance_cm ?? "null"}`
+  `Board app responding. connected=${s.hardware_connected} ` +
+    `state=${s.risk?.state} sensors=${s.sensors_online}/${s.sensors_total} ` +
+    `range=${r.distance_cm ?? "no echo"}`
 );
 
+/* ---- 4. capture the controller token ---------------------------------- */
+
 if (process.argv.includes("--token")) {
-  const logs = adb([
-    "shell",
-    "arduino-app-cli app logs user:aerohalo_range 2>/dev/null | grep -F 'CONTROLLER TOKEN' | tail -1",
-  ]);
-  const m = logs?.match(/CONTROLLER TOKEN \(paste into dashboard\):\s*(\S+)/);
-  if (m) {
-    // Printed for the operator to paste into .env.local; not written to disk
-    // here and never committed.
-    console.log(`\nAEROHALO_UNOQ_TOKEN=${m[1]}`);
-    console.log("Put that line in .env.local, then restart `npm run dev`.");
+  // Read the file the board application writes, NOT the log. The log line
+  // scrolls out of the buffer as soon as the event stream gets going, which is
+  // exactly when you need it: after a restart, mid-demo.
+  const token = adb(["shell", `cat ${TOKEN_FILE} 2>/dev/null`])?.trim();
+
+  if (token && token.length > 10) {
+    // Written straight into .env.local, which is git-ignored. The token is
+    // never printed, so it cannot end up in a screenshot or a screen recording.
+    writeFileSync(
+      join(process.cwd(), ".env.local"),
+      `AEROHALO_UNOQ_URL=http://127.0.0.1:${PORT}\nAEROHALO_UNOQ_TOKEN=${token}\n`,
+      "utf8"
+    );
+    console.log(`\nController token written to .env.local (${token.length} chars).`);
+    console.log("No dev-server restart needed: it is re-read on every command.");
   } else {
-    console.log("\nController token not found in the app log yet.");
+    console.log("\nNo controller token file on the board yet.");
+    console.log(`  Is the app running?  adb shell arduino-app-cli app start ${APP}`);
   }
 }
 
-console.log(`\nDashboard should use AEROHALO_UNOQ_URL=http://127.0.0.1:${PORT}`);
+console.log(`\nDashboard: http://localhost:3000   (switch to LIVE HARDWARE)`);

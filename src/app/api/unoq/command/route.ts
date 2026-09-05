@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { UNOQ_TOKEN, boardFetch, offlinePayload } from "../config";
+import { boardFetch, currentToken, offlinePayload } from "../config";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +26,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ detail: "Unknown command" }, { status: 400 });
   }
 
-  if (!UNOQ_TOKEN) {
+  // Re-read per command: the board mints a new token on every restart.
+  const token = currentToken();
+  if (!token) {
     return NextResponse.json(
       {
         detail:
-          "AEROHALO_UNOQ_TOKEN is not set on the server. Read the controller " +
-          "token from the board application log and put it in .env.local.",
+          "No controller token. Run `npm run unoq:token` to capture the " +
+          "current one from the board.",
       },
       { status: 503 }
     );
@@ -44,7 +46,7 @@ export async function POST(req: Request) {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${UNOQ_TOKEN}`,
+          authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ command }),
       },

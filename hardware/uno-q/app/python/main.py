@@ -602,5 +602,20 @@ print("  Status LEDs     D3 green / D4 yellow / D5 red", flush=True)
 print("Servo (D9) is DISABLED and not commanded.", flush=True)
 print("No simulated or randomised sensor values are used.", flush=True)
 print("CONTROLLER TOKEN (paste into dashboard): " + operator_token, flush=True)
+
+# Also write it into the app's data directory. The log line scrolls out of the
+# buffer once the event stream gets going, so scraping the log for it is
+# unreliable exactly when you need it - after a restart, mid-demo.
+#
+# The path matters: this application runs in a container where /app is a bind
+# mount of the app directory on the board, so /app/data lands somewhere the
+# host (and therefore `adb shell cat`) can actually read. The container's own
+# /tmp is private and would be useless here.
+try:
+    _token_path = data_dir / "controller_token"
+    with _token_path.open("w", encoding="utf-8") as _fh:
+        _fh.write(operator_token)
+except (OSError, NameError) as _exc:  # pragma: no cover - best effort only
+    print("Could not write the controller token file: %s" % _exc, flush=True)
 add_event("INFO", "UNO Q connected. Waiting for the first sensor readings.")
 App.run(user_loop=loop)

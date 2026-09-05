@@ -12,7 +12,8 @@
     "optimize:models": "node scripts/optimize-models.mjs",
     "unoq:link": "node scripts/unoq-link.mjs",
     "unoq:token": "node scripts/unoq-link.mjs --token",
-    "test:hardware": "python hardware/uno-q/tests/test_risk.py"
+    "test:hardware": "python hardware/uno-q/tests/test_risk.py",
+    "unoq:start": "node scripts/unoq-start.mjs"
   },
   "dependencies": {
     "@react-three/drei": "10.7.6",
