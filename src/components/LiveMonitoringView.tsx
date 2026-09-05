@@ -1,22 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { CameraOff, Radar, Video } from "lucide-react";
+import { Radar } from "lucide-react";
 import { Panel } from "./ui";
-import { cameraSummary, useLive } from "@/live/liveStore";
+import { useLive } from "@/live/liveStore";
 
 /**
  * LIVE HARDWARE centre view.
  *
- * Two tabs:
- *   RANGE BEAM  a truthful picture of what an HC-SR04 actually knows, which is
- *               one distance along one axis. It is drawn as a corridor with the
- *               configured boundaries, not as an object placed somewhere on a
- *               3D apron, because the sensor cannot tell us where the target is
- *               laterally and pretending otherwise would be a fabrication.
- *   OV7670      the parallel camera module. Shows a real error state until the
- *               board reports frames; it never freezes the last image and calls
- *               it live.
+ * A truthful picture of what an HC-SR04 actually knows, which is one distance
+ * along one axis. It is drawn as a corridor with the configured boundaries, not
+ * as an object placed somewhere on a 3D apron: the sensor cannot tell us where
+ * the target is laterally, and pretending otherwise would be a fabrication.
+ *
+ * The PIR and vibration sensors are shown as zone states rather than positions,
+ * for the same reason - neither one has a location.
  */
 
 /* Demonstration boundaries. These mirror python/config.py on the board. */
@@ -42,9 +39,9 @@ function RangeBeam() {
   const state = useLive((s) => s.state);
   const link = useLive((s) => s.link);
 
-  const valid = !!state?.sensor_valid && link === "online";
-  const cm = valid ? state?.distance_cm ?? null : null;
-  const ttz = valid ? state?.ttz_s ?? null : null;
+  const valid = !!state?.range.valid && link === "online";
+  const cm = valid ? (state?.range.distance_cm ?? null) : null;
+  const ttz = valid ? (state?.range.time_to_boundary_s ?? null) : null;
 
   const xCrit = xFor(CRITICAL_CM);
   const xCaut = xFor(CAUTION_CM);
@@ -169,60 +166,58 @@ function RangeBeam() {
   );
 }
 
-function CameraPane() {
-  const state = useLive((s) => s.state);
-  const cam = cameraSummary(state);
-
-  if (!cam.ok) {
-    return (
-      <div className="flex h-full w-full flex-col items-center justify-center gap-3">
-        <CameraOff size={44} strokeWidth={1.4} className="text-[#3f5a6e]" />
-        <div className="text-[15px] font-semibold tracking-[0.08em] text-[#ff5a5a]">
-          {cam.label}
-        </div>
-        <div className="max-w-[420px] text-center text-[11.5px] leading-[1.6] text-[#6f8ba0]">
-          {cam.detail}
-        </div>
-        <div className="mt-1 max-w-[460px] rounded-[5px] border border-[#14384f] bg-[#06182a] px-3 py-2 text-center text-[10.5px] leading-[1.6] text-[#5d7688]">
-          The OV7670 is a parallel DVP module, not a USB webcam. It is brought up
-          over SCCB first; no frame is shown until the board reports one.
-        </div>
-      </div>
-    );
-  }
-
-  const c = state!.camera!;
-  return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-2">
-      {/* Frames are served by the board; the age readout keeps it honest. */}
-      <img
-        src="/api/unoq/frame"
-        alt="OV7670 live frame"
-        className="max-h-[78%] rounded-[4px] border border-[#14384f]"
-      />
-      <div className="tnum text-[11px] text-[#6f8ba0]">
-        {c.width}x{c.height} &middot; {c.fps?.toFixed(1) ?? "--"} fps &middot; frame age{" "}
-        {c.frame_age_s === null ? "unknown" : `${Math.round(c.frame_age_s * 1000)} ms`}
-      </div>
-    </div>
-  );
-}
-
 export function LiveMonitoringView() {
-  const [tab, setTab] = useState<"beam" | "cam">("beam");
   const link = useLive((s) => s.link);
+  const pir = useLive((s) => s.state?.pir);
+  const vib = useLive((s) => s.state?.vibration);
+  const risk = useLive((s) => s.state?.risk.state);
+  const offline = link === "offline";
 
-  const tabCls = (on: boolean) =>
-    `flex items-center gap-2 rounded-[4px] border px-2.5 py-[7px] text-[11.5px] font-semibold tracking-[0.04em] transition-colors ${
-      on
-        ? "border-[#1d5679] bg-[#0d3247] text-[#c4d8e5]"
-        : "border-[#14384f] bg-[#061524]/92 text-[#6f8ba0] hover:border-[#1d5679]"
-    }`;
+  const chip = (label: string, value: string, colour: string) => (
+    <span className="flex items-center gap-1.5 rounded-[4px] border border-[#14384f] bg-[#061524]/92 px-2.5 py-[6px] text-[10.5px] font-semibold tracking-[0.04em]">
+      <span
+        className="h-[7px] w-[7px] rounded-full"
+        style={{ background: colour, boxShadow: `0 0 6px ${colour}` }}
+      />
+      <span className="text-[#6f8ba0]">{label}</span>
+      <span style={{ color: colour }}>{value}</span>
+    </span>
+  );
+
+  const pirColour = offline
+    ? "#ff4343"
+    : pir?.warming_up
+      ? "#f5a623"
+      : pir?.motion_detected
+        ? "#ff4343"
+        : "#31d17c";
+  const pirText = offline
+    ? "OFFLINE"
+    : pir?.warming_up
+      ? "WARMING UP"
+      : pir?.motion_detected
+        ? "MOTION"
+        : "CLEAR";
+
+  const vibColour = offline
+    ? "#ff4343"
+    : !vib?.online
+      ? "#f5a623"
+      : vib.triggered
+        ? "#ff4343"
+        : "#31d17c";
+  const vibText = offline
+    ? "OFFLINE"
+    : !vib?.online
+      ? "CALIBRATING"
+      : vib.triggered
+        ? "IMPACT"
+        : "NORMAL";
 
   return (
     <Panel className="relative min-h-0 flex-1 overflow-hidden p-0">
-      <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
-        <span className="flex items-center gap-2 rounded-[4px] border border-[#0d4a3a] bg-[#061e17]/92 px-2.5 py-[7px] text-[11.5px] font-semibold tracking-[0.04em] text-[#7ff0c0]">
+      <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-2 rounded-[4px] border border-[#0d4a3a] bg-[#061e17]/92 px-2.5 py-[6px] text-[10.5px] font-semibold tracking-[0.04em] text-[#7ff0c0]">
           <span
             className="h-[7px] w-[7px] rounded-full"
             style={{
@@ -232,21 +227,19 @@ export function LiveMonitoringView() {
           />
           LIVE HARDWARE
         </span>
+        {chip("PIR", pirText, pirColour)}
+        {chip("VIBRATION", vibText, vibColour)}
       </div>
 
-      <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
-        <button type="button" className={tabCls(tab === "beam")} onClick={() => setTab("beam")}>
-          <Radar size={14} strokeWidth={1.9} />
-          RANGE BEAM
-        </button>
-        <button type="button" className={tabCls(tab === "cam")} onClick={() => setTab("cam")}>
-          <Video size={14} strokeWidth={1.9} />
-          OV7670
-        </button>
+      <div className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2">
+        <span className="flex items-center gap-2 rounded-[4px] border border-[#14384f] bg-[#061524]/92 px-2.5 py-[7px] text-[11.5px] font-semibold tracking-[0.04em] text-[#c4d8e5]">
+          <Radar size={14} strokeWidth={1.9} className="text-[#7d97ab]" />
+          RANGE BEAM &middot; FUSED STATE {offline ? "UNKNOWN" : (risk ?? "UNKNOWN")}
+        </span>
       </div>
 
-      <div className="h-full w-full px-2 pb-14 pt-2">
-        {tab === "beam" ? <RangeBeam /> : <CameraPane />}
+      <div className="h-full w-full px-2 pb-12 pt-2">
+        <RangeBeam />
       </div>
     </Panel>
   );

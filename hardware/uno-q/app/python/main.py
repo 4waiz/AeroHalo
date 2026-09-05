@@ -1,12 +1,12 @@
 """AeroHalo UNO Q application. Runs under Arduino App Lab on the board.
 
-LIVE HARDWARE only: every distance published here comes from the HC-SR04 on
-the microcontroller. There is no simulated, randomised or replayed range
-anywhere in this file. If the sensor gives no echo the reading is reported
-UNKNOWN, never 0 cm and never SAFE.
+LIVE HARDWARE only. Every value published here comes from a real sensor on the
+microcontroller: HC-SR04 range, HC-SR501 personnel/motion, SW-420 vibration.
+There is no simulated, randomised or replayed data anywhere in this file. If a
+sensor cannot measure, the field is null and the state is UNKNOWN, never SAFE.
 
 Serves:
-    GET  /api/state    current telemetry (schema_version 2)
+    GET  /api/state    fused telemetry (schema_version 3)
     GET  /api/events   retained event log
     POST /api/command  operator command, Bearer controller token required
 """
@@ -26,7 +26,15 @@ from arduino.app_bricks.web_ui import WebUI
 from fastapi import Header, HTTPException
 
 import config
-from risk import RangeTracker, assess, normalize_detections
+from risk import (
+    LEVEL_CAUTION,
+    LEVEL_HOLD,
+    LEVEL_SAFE,
+    LEVEL_UNKNOWN,
+    RangeTracker,
+    fuse,
+    range_assessment,
+)
 
 ui = WebUI()
 tracker = RangeTracker()
@@ -35,58 +43,81 @@ commands = queue.Queue(maxsize=12)
 operator_token = secrets.token_urlsafe(18)
 events = deque(maxlen=400)
 
+LEVEL_NAME = {
+    LEVEL_SAFE: "SAFE",
+    LEVEL_CAUTION: "CAUTION",
+    LEVEL_HOLD: "HOLD",
+    LEVEL_UNKNOWN: "UNKNOWN",
+}
+
 state = {
-    "schema_version": 2,
+    "schema_version": 3,
     "source": "uno-q",
-    "connected": False,
-    "distance_cm": None,
-    "raw_distance_cm": None,
-    "closing_cm_s": None,
-    "ttz_s": None,
-    "risk": None,
-    "status": "UNKNOWN",
-    "hold": False,
-    "sensor_valid": False,
-    "servo_enabled": False,
-    "engine_on": False,
-    "vision_enabled": config.ENABLE_VISION,
-    "vision_latched": False,
-    "vision_seen": False,
-    "detections": [],
-    "vision_last_event_age_s": None,
-    "sample_rate_hz": None,
-    "alerts": ["Waiting for the first HC-SR04 reading."],
+    "hardware_connected": False,
+
+    "range": {
+        "online": False,
+        "valid": False,
+        "distance_cm": None,
+        "raw_distance_cm": None,
+        "closing_cm_s": None,
+        "time_to_boundary_s": None,
+        "sample_age_ms": None,
+        "sample_sequence": None,
+        "sample_rate_hz": None,
+        "detail": "Waiting for the first HC-SR04 reading",
+    },
+    "pir": {
+        "online": False,
+        "warming_up": True,
+        "motion_detected": False,
+        "last_trigger_ms": None,
+        "detail": "Warming up",
+    },
+    "vibration": {
+        "online": False,
+        "triggered": False,
+        "last_trigger_ms": None,
+        "polarity": "unverified",
+        "detail": "Learning idle level",
+    },
+    "outputs": {
+        "green_led": False,
+        "yellow_led": False,
+        "red_led": False,
+        "self_test_done": False,
+        "servo_enabled": False,
+        "servo_commanded_state": "disabled",
+    },
+    "risk": {"score": None, "state": "UNKNOWN", "reasons": []},
+    "hold": {"latched": False, "reason": "", "since": None},
+
+    "sensors_online": 0,
+    "sensors_total": 3,
     "bridge_roundtrip_ms": None,
-    "updated_utc": None,
-    "sample_seq": None,
+    "telemetry_age_s": None,
     "last_command": "None",
     "storage": "starting",
-    "camera_scope": "Camera AI disabled in this build",
-    "telemetry_line": "HC-SR04 | waiting for microcontroller",
-    # OV7670 is a parallel DVP module, not a UVC device. It stays "absent"
-    # until the board has actually identified it over SCCB.
-    "camera": {
-        "state": "absent",
-        "sensor_id": None,
-        "width": None,
-        "height": None,
-        "fps": None,
-        "frame_age_s": None,
-        "detail": "OV7670 bring-up not started",
-    },
+    "updated_at": None,
 }
 
 last_success = 0.0
 last_valid_at = 0.0
 manual_request = False
 release_pending = False
-engine_on = False
-last_event_key = None
+hold_since = None
+hold_reason = ""
 
-# Measured sample-rate window.
 sample_count = 0
 rate_window_start = 0.0
 last_seen_seq = None
+
+# Event de-duplication: key -> monotonic time it was last emitted.
+_event_seen = {}
+_last_state_key = None
+_pir_announced = False
+_vib_announced = False
+_range_announced = False
 
 try:
     data_dir = Path(os.getenv("AERO_DATA_DIR", "/app/data"))
@@ -104,7 +135,21 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def add_event(severity, message):
+def add_event(severity, message, key=None, dedupe_s=None):
+    """Append an event, suppressing repeats of a continuous condition.
+
+    `key` identifies the condition. While the same key keeps arriving inside
+    `dedupe_s` it is logged once, so holding an object at 30 cm produces one
+    CAUTION line rather than ten per second.
+    """
+    now = time.monotonic()
+    if key is not None:
+        window = config.EVENT_DEDUPE_S if dedupe_s is None else dedupe_s
+        previous = _event_seen.get(key)
+        if previous is not None and now - previous < window:
+            return
+        _event_seen[key] = now
+
     entry = {"utc": utc_now(), "severity": severity, "message": message}
     with lock:
         events.appendleft(entry)
@@ -123,22 +168,24 @@ def get_state():
         age = time.monotonic() - last_success if last_success else None
         result["telemetry_age_s"] = round(age, 3) if age is not None else None
         if age is None or age > 2.0:
-            # Stale telemetry is UNKNOWN, never a reassuring status.
-            result.update(
-                connected=False,
-                status="UNKNOWN",
-                distance_cm=None,
-                raw_distance_cm=None,
-                closing_cm_s=None,
-                ttz_s=None,
-                risk=None,
-                sensor_valid=False,
-                sample_rate_hz=None,
+            # Stale telemetry is UNKNOWN. It is never a reassuring state, and
+            # no sensor is claimed online when nothing is arriving.
+            result["hardware_connected"] = False
+            result["range"].update(
+                online=False, valid=False, distance_cm=None, raw_distance_cm=None,
+                closing_cm_s=None, time_to_boundary_s=None, sample_rate_hz=None,
+                detail="No telemetry from the microcontroller",
             )
-            result["alerts"] = [
-                "No telemetry from the microcontroller. Range unknown."
-            ]
-            result["telemetry_line"] = "HC-SR04 | no telemetry"
+            result["pir"].update(online=False, motion_detected=False,
+                                 detail="No telemetry")
+            result["vibration"].update(online=False, triggered=False,
+                                       detail="No telemetry")
+            result["sensors_online"] = 0
+            result["risk"] = {
+                "score": None,
+                "state": "UNKNOWN",
+                "reasons": ["No telemetry from the microcontroller"],
+            }
         result["events"] = list(events)[:14]
         return result
 
@@ -156,7 +203,7 @@ def post_command(payload: dict, authorization: str = Header(default="")):
             detail="Paste the controller token printed in the board console",
         )
     name = payload.get("command")
-    allowed = {"hold", "clear_after_inspection", "engine_on", "engine_off"}
+    allowed = {"hold", "clear_after_inspection"}
     if name not in allowed:
         raise HTTPException(status_code=400, detail="Unknown command")
     try:
@@ -176,7 +223,7 @@ ui.expose_api("POST", "/api/command", post_command)
 
 
 def process_commands():
-    global manual_request, release_pending, engine_on
+    global manual_request, release_pending
     while True:
         try:
             command = commands.get_nowait()
@@ -188,20 +235,15 @@ def process_commands():
                 release_pending = False
             elif command == "clear_after_inspection":
                 release_pending = True
-            elif command == "engine_on":
-                engine_on = True
-                # A mode change is never evidence that the zone is clear.
-                manual_request = True
-            elif command == "engine_off":
-                engine_on = False
-            state["engine_on"] = engine_on
             state["last_command"] = "Queued: " + command
-        add_event("OPERATOR", command)
+        add_event("OPERATOR", "Operator command: " + command)
 
 
 def loop():
     global last_success, last_valid_at, manual_request, release_pending
-    global last_event_key, sample_count, rate_window_start, last_seen_seq
+    global sample_count, rate_window_start, last_seen_seq
+    global _last_state_key, _pir_announced, _vib_announced, _range_announced
+    global hold_since, hold_reason
 
     started = time.monotonic()
     process_commands()
@@ -210,168 +252,250 @@ def loop():
         raw = Bridge.call("read_sensors", timeout=config.MCU_TIMEOUT_S)
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
-        sample = json.loads(raw)
-        required = {"seq", "ms", "age_ms", "mm", "raw_mm", "valid", "held", "level"}
-        if not isinstance(sample, dict) or not required.issubset(sample):
+        s = json.loads(raw)
+        required = {"s", "t", "a", "d", "w", "v", "h", "l", "p", "pw", "b", "be"}
+        if not isinstance(s, dict) or not required.issubset(s):
             raise ValueError("Unexpected MCU telemetry schema")
 
         now = time.monotonic()
-        valid = (
-            bool(sample["valid"])
-            and 20 <= sample["mm"] <= 4000
-            and sample["age_ms"] <= 500
-        )
+
+        # ---- range ------------------------------------------------------
+        valid = bool(s["v"]) and 20 <= s["d"] <= 4000 and s["a"] <= 500
         if valid:
             last_valid_at = now
+        speed = tracker.update(s["s"], s["t"], s["d"], valid)
+        rng = range_assessment(s["d"] if valid else None, speed, valid)
 
-        speed = tracker.update(sample["seq"], sample["ms"], sample["mm"], valid)
-        evaluation = assess(sample["mm"] if valid else None, speed, valid)
+        since_valid = now - last_valid_at if last_valid_at else None
+        range_unknown_too_long = (
+            since_valid is None or since_valid > config.INVALID_HOLD_AFTER_S
+        )
 
-        # Measured sample rate, so a stalled sketch is visible rather than implied.
-        if sample["seq"] != last_seen_seq:
-            last_seen_seq = sample["seq"]
+        # ---- PIR --------------------------------------------------------
+        pir_warming = bool(s["pw"])
+        pir_motion = bool(s["p"]) and not pir_warming
+        pir_age_ms = int(s.get("pt", 999999))
+        pir_seen = pir_age_ms < 999999
+
+        # ---- vibration --------------------------------------------------
+        vib_calibrated = bool(s.get("bc", 0))
+        vib_active = bool(s["b"])
+        vib_edge = bool(s["be"])
+        vib_age_ms = int(s.get("bt", 999999))
+        vib_seen = vib_age_ms < 999999
+        vib_idle_high = bool(s.get("bi", 1))
+
+        # ---- fusion -----------------------------------------------------
+        # A vibration HOLD must survive the signal returning to normal, so the
+        # engine is fed the latch, not the instantaneous line level.
+        vib_forces_hold = vib_edge or (
+            state["vibration"]["triggered"] and state["hold"]["latched"]
+        )
+        verdict = fuse(rng, pir_motion, vib_forces_hold, range_unknown_too_long)
+
+        level = verdict["level"]
+        reasons = list(verdict["reasons"])
+        if manual_request:
+            level = LEVEL_HOLD
+            reasons.append("Manual HOLD requested by operator")
+
+        # ---- operator release -------------------------------------------
+        # The physical button and the dashboard button take the same path and
+        # face the same interlocks.
+        button_request = bool(s.get("bq", 0))
+        if button_request and not release_pending:
+            release_pending = True
+            add_event("OPERATOR", "Physical reset button pressed",
+                      key="btn", dedupe_s=1.0)
+
+        release = False
+        if release_pending:
+            blockers = []
+            if not valid:
+                blockers.append("range invalid")
+            elif s["d"] <= config.RELEASE_MM:
+                blockers.append("target within %.0f cm" % (config.RELEASE_MM / 10))
+            if pir_motion:
+                blockers.append("personnel motion present")
+            if vib_active:
+                blockers.append("vibration still active")
+            if blockers:
+                state["last_command"] = "Reset refused: " + ", ".join(blockers)
+                add_event("OPERATOR", state["last_command"], key="reset_refused")
+            else:
+                release = True
+            release_pending = False
+
+        # ---- command the MCU --------------------------------------------
+        held = bool(
+            Bridge.call("apply_command", int(level), bool(release),
+                        timeout=config.MCU_TIMEOUT_S)
+        )
+        if manual_request:
+            manual_request = False   # the MCU owns the latch now
+
+        if release:
+            if held:
+                state["last_command"] = (
+                    "Reset refused by MCU: hold a safe distance for 2 s")
+                add_event("OPERATOR", state["last_command"])
+            else:
+                state["last_command"] = "Operator inspection completed"
+                add_event("INFO", "Operator inspection completed. HOLD released.")
+                _event_seen.clear()   # let the next real condition speak again
+
+        if held and level != LEVEL_HOLD:
+            level = LEVEL_HOLD
+            if not reasons:
+                reasons.append(
+                    "HOLD latched. Inspect the zone, then reset after inspection.")
+
+        # ---- measured sample rate ---------------------------------------
+        if s["s"] != last_seen_seq:
+            last_seen_seq = s["s"]
             sample_count += 1
             if rate_window_start == 0.0:
                 rate_window_start = now
         elapsed = now - rate_window_start if rate_window_start else 0.0
         rate = round(sample_count / elapsed, 1) if elapsed >= 1.0 else None
-        if elapsed > 10.0:  # slide the window so the figure stays current
+        if elapsed > 10.0:
             sample_count, rate_window_start = 0, now
 
+        state_name = LEVEL_NAME[level]
+
+        # ---- one-time "online" announcements ----------------------------
+        if valid and not _range_announced:
+            _range_announced = True
+            add_event("INFO", "HC-SR04 online")
+        if not pir_warming and not _pir_announced:
+            _pir_announced = True
+            add_event("INFO", "PIR ready (warm-up complete)")
+        if vib_calibrated and not _vib_announced:
+            _vib_announced = True
+            add_event("INFO", "SW-420 online, idle level %s"
+                      % ("HIGH" if vib_idle_high else "LOW"))
+
+        # ---- condition events, de-duplicated ----------------------------
+        if pir_motion:
+            add_event("HIGH", "Personnel / motion detected", key="pir")
+        if vib_edge:
+            add_event("CRITICAL",
+                      "Abnormal vibration detected. Possible impact, inspection required",
+                      key="vib", dedupe_s=2.0)
+        if rng["valid"] and rng["ttz_s"] is not None:
+            if rng["ttz_s"] <= config.PREDICT_HOLD_S:
+                add_event("CRITICAL",
+                          "Predicted boundary entry in %.1f s" % rng["ttz_s"],
+                          key="ttz_hold", dedupe_s=3.0)
+            elif rng["ttz_s"] <= config.PREDICT_CAUTION_S:
+                add_event("HIGH",
+                          "Predicted boundary entry in %.1f s" % rng["ttz_s"],
+                          key="ttz_caution", dedupe_s=3.0)
+        if rng["valid"] and rng["caution"]:
+            add_event("CAUTION", "Object entered caution zone. Distance %.1f cm"
+                      % rng["distance_cm"], key="caution")
+
         with lock:
-            level = evaluation["level"]
-            reasons = list(evaluation["reasons"])
-
-            # Sustained loss of echo escalates to HOLD; a single dropout does
-            # not. Either way the status is UNKNOWN, never SAFE.
-            if evaluation["unknown"]:
-                since_valid = now - last_valid_at if last_valid_at else None
-                if since_valid is None or since_valid > config.INVALID_HOLD_AFTER_S:
-                    level = 2
-                    reasons.append(
-                        "No valid echo for over %.1f s: holding"
-                        % config.INVALID_HOLD_AFTER_S
-                    )
-
-            if manual_request:
-                level = 2
-                reasons.append("Manual HOLD requested by operator")
-
-            release = False
-            if release_pending:
-                if valid and sample["mm"] > config.RELEASE_MM and level == 0:
-                    release = True
-                else:
-                    state["last_command"] = (
-                        "Reset refused: inspect the zone, move the target beyond "
-                        "%.0f cm, hold it steady, then retry"
-                        % (config.RELEASE_MM / 10)
-                    )
-                release_pending = False
-
-            held = bool(
-                Bridge.call(
-                    "apply_command",
-                    int(level),
-                    bool(release),
-                    timeout=config.MCU_TIMEOUT_S,
-                )
-            )
-            if manual_request:
-                manual_request = False  # the MCU owns the latch now
-
-            if release:
-                state["last_command"] = (
-                    "Reset refused by MCU: hold a safe distance for 2 s"
-                    if held
-                    else "Reset accepted by MCU"
-                )
-                add_event("OPERATOR", state["last_command"])
-
-            if held and not reasons:
-                reasons.append(
-                    "HOLD latched. Inspect the zone, then use Reset after inspection."
-                )
-
-            if not valid:
-                status = "UNKNOWN"
-            elif held:
-                status = "HOLD"
-            elif level == 1:
-                status = "CAUTION"
-            else:
-                status = "SAFE"
+            if held and hold_since is None:
+                hold_since = utc_now()
+                hold_reason = reasons[0] if reasons else "Safety interlock engaged"
+                add_event("HOLD", "Safety interlock engaged: " + hold_reason)
+            elif not held:
+                hold_since = None
+                hold_reason = ""
 
             last_success = now
-            state.update(
-                connected=True,
-                distance_cm=round(sample["mm"] / 10.0, 1) if valid else None,
-                raw_distance_cm=(
-                    round(sample["raw_mm"] / 10.0, 1) if sample["raw_mm"] > 0 else None
-                ),
-                closing_cm_s=round(speed / 10.0, 1) if valid else None,
-                ttz_s=(
-                    round(evaluation["ttz_s"], 2)
-                    if evaluation["ttz_s"] is not None
-                    else None
-                ),
-                risk=evaluation["risk"],
-                status=status,
-                hold=held,
-                sensor_valid=valid,
-                servo_enabled=bool(sample.get("servo_enabled", False)),
-                sample_rate_hz=rate,
-                alerts=reasons,
-                bridge_roundtrip_ms=round((now - started) * 1000, 1),
-                updated_utc=utc_now(),
-                sample_seq=sample["seq"],
-                engine_on=engine_on,
-                telemetry_line=(
-                    "HC-SR04 | Distance: %.1f cm | VALID" % (sample["mm"] / 10.0)
-                    if valid
-                    else "HC-SR04 | Distance: UNKNOWN"
-                ),
-            )
+            online = (1 if valid else 0) + (1 if not pir_warming else 0) + (
+                1 if vib_calibrated else 0)
 
-            # Log on meaningful transitions only, so the journal does not fill
-            # with one entry per frame as the decimals move.
-            event_key = (status, held, level, valid)
-            if event_key != last_event_key:
-                add_event(
-                    status,
-                    " | ".join(reasons) if reasons else "Range clear and stable",
-                )
-                last_event_key = event_key
+            state["hardware_connected"] = True
+            state["range"].update(
+                online=True,
+                valid=valid,
+                distance_cm=rng["distance_cm"],
+                raw_distance_cm=round(s["w"] / 10.0, 1) if s["w"] > 0 else None,
+                closing_cm_s=round(speed / 10.0, 1) if valid else None,
+                time_to_boundary_s=(
+                    round(rng["ttz_s"], 2) if rng["ttz_s"] is not None else None),
+                sample_age_ms=int(s["a"]),
+                sample_sequence=int(s["s"]),
+                sample_rate_hz=rate,
+                detail="HC-SR04 on D6 / D7" if valid else "No echo: range unknown",
+            )
+            state["pir"].update(
+                online=not pir_warming,
+                warming_up=pir_warming,
+                motion_detected=pir_motion,
+                last_trigger_ms=pir_age_ms if pir_seen else None,
+                detail=(
+                    "Warming up" if pir_warming
+                    else "Motion detected" if pir_motion
+                    else "Clear"),
+            )
+            state["vibration"].update(
+                online=vib_calibrated,
+                triggered=vib_active or vib_edge,
+                last_trigger_ms=vib_age_ms if vib_seen else None,
+                polarity=(
+                    "unverified" if not vib_calibrated
+                    else ("active-low" if vib_idle_high else "active-high")),
+                detail=(
+                    "Learning idle level" if not vib_calibrated
+                    else "Impact detected" if (vib_active or vib_edge)
+                    else "Normal"),
+            )
+            state["outputs"].update(
+                green_led=bool(s.get("g", 0)),
+                yellow_led=bool(s.get("y", 0)),
+                red_led=bool(s.get("r", 0)),
+                self_test_done=bool(s.get("st", 0)),
+                servo_enabled=bool(s.get("sv", 0)),
+                servo_commanded_state="disabled",
+            )
+            state["risk"] = {
+                "score": verdict["score"] if rng["valid"] or pir_motion or vib_edge else None,
+                "state": state_name,
+                "reasons": reasons,
+            }
+            state["hold"] = {
+                "latched": held,
+                "reason": hold_reason,
+                "since": hold_since,
+            }
+            state["sensors_online"] = online
+            state["bridge_roundtrip_ms"] = round((now - started) * 1000, 1)
+            state["updated_at"] = utc_now()
 
     except Exception as exc:  # noqa: BLE001 - a dead link must not kill the loop
         tracker.clear()
         with lock:
-            state.update(
-                connected=False,
-                status="UNKNOWN",
-                hold=state.get("hold", False),
-                risk=None,
-                distance_cm=None,
-                raw_distance_cm=None,
-                closing_cm_s=None,
-                ttz_s=None,
-                sensor_valid=False,
-                sample_rate_hz=None,
-                alerts=["MCU communication failed: " + str(exc)],
-                telemetry_line="HC-SR04 | MCU unreachable",
-            )
-        if last_event_key != ("ERROR",):
-            add_event("ERROR", str(exc))
-            last_event_key = ("ERROR",)
-        # Never fabricate a successful HOLD here: the MCU watchdog is
-        # independent and latches on its own when Linux goes quiet.
+            state["hardware_connected"] = False
+            state["range"].update(online=False, valid=False, distance_cm=None,
+                                  closing_cm_s=None, time_to_boundary_s=None,
+                                  detail="MCU unreachable")
+            state["pir"].update(online=False, motion_detected=False,
+                                detail="MCU unreachable")
+            state["vibration"].update(online=False, detail="MCU unreachable")
+            state["sensors_online"] = 0
+            state["risk"] = {
+                "score": None,
+                "state": "UNKNOWN",
+                "reasons": ["MCU communication failed: " + str(exc)],
+            }
+        add_event("ERROR", "MCU communication failed: " + str(exc), key="mcu_err")
+        # Never fabricate a successful HOLD: the MCU watchdog is independent and
+        # latches on its own when Linux goes quiet.
 
     time.sleep(max(0.005, config.POLL_INTERVAL_S - (time.monotonic() - started)))
 
 
-print("AeroHalo LIVE HARDWARE mode. HC-SR04 on D6 (TRIG) / D7 (ECHO).", flush=True)
-print("No simulated or randomised distance values are used.", flush=True)
-print("Servo, DC motor, stepper, buzzer and camera AI are DISABLED.", flush=True)
+print("AeroHalo LIVE HARDWARE. Three-sensor fusion:", flush=True)
+print("  HC-SR04 range   D6 TRIG / D7 ECHO (through the 2.2k/3.3k divider)", flush=True)
+print("  HC-SR501 PIR    D8", flush=True)
+print("  SW-420 vibration D10", flush=True)
+print("  Status LEDs     D3 green / D4 yellow / D5 red", flush=True)
+print("Servo (D9) is DISABLED and not commanded.", flush=True)
+print("No simulated or randomised sensor values are used.", flush=True)
 print("CONTROLLER TOKEN (paste into dashboard): " + operator_token, flush=True)
-add_event("STARTUP", "Waiting for the first real HC-SR04 reading.")
+add_event("INFO", "UNO Q connected. Waiting for the first sensor readings.")
 App.run(user_loop=loop)

@@ -10,6 +10,7 @@ import { SimulationControls } from "./SimulationControls";
 import { SimRuntime } from "@/sim/SimRuntime";
 import {
   LiveOperatorPanel,
+  LiveOutputsPanel,
   LiveRangePanel,
   LiveRiskGaugeCard,
   LiveSafetyStatusCard,
@@ -47,6 +48,7 @@ export function Dashboard() {
               <LiveSafetyStatusCard />
               <LiveRiskGaugeCard />
               <LiveRangePanel />
+              <LiveOutputsPanel />
               <LiveStatusCardGrid />
               <LiveOperatorPanel />
             </>

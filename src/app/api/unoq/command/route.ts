@@ -4,12 +4,7 @@ import { UNOQ_TOKEN, boardFetch, offlinePayload } from "../config";
 export const dynamic = "force-dynamic";
 
 /** The board rejects anything else; mirroring the list here fails fast. */
-const ALLOWED = new Set([
-  "hold",
-  "clear_after_inspection",
-  "engine_on",
-  "engine_off",
-]);
+const ALLOWED = new Set(["hold", "clear_after_inspection"]);
 
 /**
  * POST /api/unoq/command -> board POST /api/command

@@ -190,80 +190,18 @@ export function fmtNumber(
  * which is different from "unknown", so the two read differently.
  */
 export function fmtTtz(s: UnoQState | null): string {
-  if (!s || !s.connected) return UNAVAILABLE;
-  if (!s.sensor_valid) return UNAVAILABLE;
-  if (s.ttz_s === null) return "Not approaching";
-  return `${s.ttz_s.toFixed(1)} s`;
+  if (!s || !s.hardware_connected) return UNAVAILABLE;
+  if (!s.range.valid) return UNAVAILABLE;
+  // null here is a real answer ("not closing"), distinct from "we do not know".
+  if (s.range.time_to_boundary_s === null) return "Not approaching";
+  return `${s.range.time_to_boundary_s.toFixed(1)} s`;
 }
 
-export function fmtAge(s: UnoQState | null): string {
-  if (!s || s.telemetry_age_s === null) return UNAVAILABLE;
-  return `${Math.round(s.telemetry_age_s * 1000)} ms`;
-}
-
-/** What to print for the range sensor itself, never a fabricated count. */
-export function sensorSummary(
+/** How many of the three sensors are genuinely reporting. Never inflated. */
+export function sensorCount(
   s: UnoQState | null,
   link: LiveLinkState
-): { label: string; detail: string; ok: boolean } {
-  if (link === "offline" || !s) {
-    return { label: "UNO Q OFFLINE", detail: "No telemetry service", ok: false };
-  }
-  if (!s.connected) {
-    return {
-      label: "0 / 1 Range Sensor Online",
-      detail: "Microcontroller not reporting",
-      ok: false,
-    };
-  }
-  if (link === "stale") {
-    return {
-      label: "RANGE SENSOR STALE",
-      detail: "Telemetry older than 1.5 s",
-      ok: false,
-    };
-  }
-  if (!s.sensor_valid) {
-    return {
-      label: "1 / 1 Range Sensor Online",
-      detail: "No echo: range unknown",
-      ok: false,
-    };
-  }
-  return {
-    label: "1 / 1 Range Sensor Online",
-    detail: "HC-SR04 on D6 / D7",
-    ok: true,
-  };
-}
-
-/** OV7670 status text. Absent is the honest default until SCCB replies. */
-export function cameraSummary(s: UnoQState | null): {
-  label: string;
-  detail: string;
-  ok: boolean;
-} {
-  const cam = s?.camera;
-  if (!cam || cam.state === "absent") {
-    return {
-      label: "OV7670 OFFLINE",
-      detail: "No valid camera frames received",
-      ok: false,
-    };
-  }
-  if (cam.state === "error") {
-    return { label: "OV7670 ERROR", detail: cam.detail, ok: false };
-  }
-  if (cam.state === "detected") {
-    return {
-      label: "OV7670 DETECTED",
-      detail: cam.sensor_id
-        ? `SCCB id ${cam.sensor_id}, no frames yet`
-        : "SCCB responding, no frames yet",
-      ok: false,
-    };
-  }
-  const res = cam.width && cam.height ? `${cam.width}x${cam.height}` : UNAVAILABLE;
-  const fps = cam.fps === null ? UNAVAILABLE : `${cam.fps.toFixed(1)} fps`;
-  return { label: "OV7670 ONLINE", detail: `${res} at ${fps}`, ok: true };
+): { online: number; total: number } {
+  if (!s || link === "offline") return { online: 0, total: 3 };
+  return { online: s.sensors_online, total: s.sensors_total };
 }

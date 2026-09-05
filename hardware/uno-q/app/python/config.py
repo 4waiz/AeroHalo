@@ -1,11 +1,11 @@
 """AeroHalo demo settings.
 
-Every distance here is a tabletop demonstration value chosen so the effect is
-visible on a desk. None of them are aviation standards and none of them are
+Every distance and weight here is a tabletop demonstration value chosen so the
+effect is visible on a desk. None of them are aviation standards and none are
 derived from any real airside separation minimum.
 
-Hardware bring-up build: HC-SR04 only. No servo, DC motor, stepper, buzzer or
-camera AI is enabled anywhere in this application.
+Three-sensor build: HC-SR04 range, HC-SR501 personnel/motion, SW-420 vibration,
+plus three status LEDs. Servo, DC motor, stepper, buzzer and camera are OFF.
 """
 
 # --- range boundaries (mm) -------------------------------------------------
@@ -18,6 +18,20 @@ PREDICT_CAUTION_S = 4.0    # time-to-boundary <= 4 s -> predictive CAUTION
 PREDICT_HOLD_S = 2.0       # time-to-boundary <= 2 s -> predictive HOLD
 MIN_APPROACH_MM_S = 20.0   # 2 cm/s: below this, closing speed is not meaningful
 
+# --- risk weights ----------------------------------------------------------
+# Additive and clamped to 0-100. Only the highest applicable band in each group
+# contributes, so proximity and prediction do not double-count themselves.
+RISK_PROXIMITY_CAUTION = 30
+RISK_CRITICAL_RANGE = 60
+RISK_PREDICT_CAUTION = 25
+RISK_PREDICT_HOLD = 50
+RISK_PIR = 35
+RISK_VIBRATION = 55
+
+# --- risk bands ------------------------------------------------------------
+BAND_CAUTION = 30   # 0-29 SAFE, 30-69 CAUTION, 70-100 HOLD
+BAND_HOLD = 70
+
 # --- timing ----------------------------------------------------------------
 POLL_INTERVAL_S = 0.10     # 10 Hz, matching the MCU sample rate
 MCU_TIMEOUT_S = 1.0        # Bridge call timeout
@@ -25,7 +39,11 @@ MCU_TIMEOUT_S = 1.0        # Bridge call timeout
 # treated as a hazard, so transient dropouts read UNKNOWN rather than HOLD.
 INVALID_HOLD_AFTER_S = 1.5
 
-# --- vision (disabled in this build) ---------------------------------------
+# --- events ----------------------------------------------------------------
+# Suppress repeats of the same continuous condition for this long.
+EVENT_DEDUPE_S = 5.0
+
+# --- vision (not part of this build) ---------------------------------------
 ENABLE_VISION = False
 DETECTION_CONFIDENCE = 0.55
 DETECTION_DEBOUNCE_S = 0.10

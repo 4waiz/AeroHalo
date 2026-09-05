@@ -45,9 +45,9 @@ function sevColour(s: string) {
 const NO_ALERTS: string[] = [];
 
 export function LiveAlertsPanel() {
-  const alerts = useLive((s) => s.state?.alerts ?? NO_ALERTS);
+  const alerts = useLive((s) => s.state?.risk.reasons ?? NO_ALERTS);
   const link = useLive((s) => s.link);
-  const hold = useLive((s) => s.state?.hold ?? false);
+  const hold = useLive((s) => s.state?.hold.latched ?? false);
 
   return (
     <Panel className="min-h-0 flex-1 overflow-hidden px-3.5 pb-3 pt-3">
@@ -180,7 +180,7 @@ export function LiveSystemSummaryPanel() {
   const state = useLive((s) => s.state);
   const link = useLive((s) => s.link);
   const fetchMs = useLive((s) => s.fetchMs);
-  const connected = !!state?.connected && link !== "offline";
+  const connected = !!state?.hardware_connected && link !== "offline";
 
   return (
     <Panel className="shrink-0 px-3.5 pb-3 pt-3">
@@ -188,12 +188,16 @@ export function LiveSystemSummaryPanel() {
       <div className="mt-2 grid grid-cols-4 gap-2">
         <Tile
           icon={<Radio size={14} strokeWidth={2} />}
-          value={connected ? "1" : "0"}
-          label="RANGE SENSORS ONLINE"
+          value={connected ? `${state!.sensors_online} / ${state!.sensors_total}` : "0 / 3"}
+          label="SENSORS ONLINE"
         />
         <Tile
           icon={<Cpu size={14} strokeWidth={2} />}
-          value={fmtNumber(state?.sample_rate_hz ?? null, 1, "Hz").replace(" Hz", "")}
+          value={
+            connected
+              ? fmtNumber(state?.range.sample_rate_hz ?? null, 1, "Hz").replace(" Hz", "")
+              : UNAVAILABLE
+          }
           label="MCU SAMPLE RATE (Hz)"
         />
         <Tile
@@ -212,8 +216,9 @@ export function LiveSystemSummaryPanel() {
         />
       </div>
       <div className="mt-2 border-t border-[#12293c] pt-1.5 text-[10px] leading-[1.5] text-[#5d7688]">
-        No AI accuracy figure is shown: nothing in this build measures model
-        accuracy. Bridge round trip is MCU link latency, not vision latency.
+        Three real sensors: HC-SR04 range, HC-SR501 personnel, SW-420 vibration.
+        No AI accuracy figure is shown because nothing in this build measures
+        model accuracy. Bridge round trip is MCU link latency, not vision latency.
         {state?.storage ? ` Event storage: ${state.storage}.` : ""}
       </div>
     </Panel>

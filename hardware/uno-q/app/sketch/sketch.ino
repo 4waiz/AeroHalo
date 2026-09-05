@@ -1,105 +1,161 @@
-/* AeroHalo Range - Arduino UNO Q (STM32U585) MCU firmware.
+/* AeroHalo - Arduino UNO Q (STM32U585) MCU firmware.
+ * Three-sensor fusion edge layer for the AeroHalo airside safety prototype.
  *
- * Tabletop demonstrator for INSPIRE '26. NOT certified safety equipment and
- * not connected to any real aircraft system.
+ * Tabletop demonstrator for INSPIRE '26. NOT certified safety equipment, not
+ * connected to any real aircraft system, and with no clearance authority.
  *
- * Wiring (power off while wiring):
- *   HC-SR04 VCC  -> 5V
- *   HC-SR04 GND  -> GND
- *   HC-SR04 TRIG -> D6
- *   HC-SR04 ECHO -> 2.2k -> D7 junction -> 3.3k -> GND    (~3.0 V at D7)
+ * ---------------------------------------------------------------------------
+ * Pin map (locked)
+ * ---------------------------------------------------------------------------
+ *   D2   optional HOLD reset / inspection button, INPUT_PULLUP, other leg GND
+ *   D3   GREEN  status LED  -> 220-330R -> LED -> GND
+ *   D4   YELLOW status LED  -> 220-330R -> LED -> GND
+ *   D5   RED    status LED  -> 220-330R -> LED -> GND
+ *   D6   HC-SR04 TRIG
+ *   D7   HC-SR04 ECHO, through the existing 2.2k / 3.3k divider (~3.0 V)
+ *   D8   HC-SR501 PIR OUT
+ *   D9   SG90 servo signal                      (DISABLED, not commissioned)
+ *   D10  SW-420 vibration module DO
+ *   D0/D1 deliberately unused.
  *
- * The divider is mandatory: HC-SR04 Echo idles at 5 V and D7 is a 3.3 V pin.
- *
- * Deliberately DISABLED in this build: servo, DC motor, stepper, buzzer and
- * any camera path. Only the ultrasonic sensor and the on-board RGB LED run.
+ * The HC-SR04 divider is mandatory: Echo idles at 5 V and D7 is a 3.3 V pin.
+ * The SW-420 runs at 3.3 V; the HC-SR04 and HC-SR501 run at 5 V. All share GND.
  *
  * ---------------------------------------------------------------------------
  * Why the RPC surface looks like this
  * ---------------------------------------------------------------------------
- * Telemetry is PULLED by Linux (Bridge.provide_safe("read_sensors")) rather
- * than pushed with Bridge.notify. Two reasons:
+ * Telemetry is PULLED by Linux via Bridge.provide_safe("read_sensors"):
  *
- *  1. provide_safe binds the handler with the "__safe__" tag, so the core runs
- *     it from __loopHook() in loop context. It therefore cannot race loop()
- *     while loop() is halfway through updating filteredMm / holdLatched.
- *     Plain provide() runs on the Bridge worker thread and would race.
+ *  1. provide_safe binds with the "__safe__" tag so the core runs the handler
+ *     from __loopHook() in loop context. It cannot race loop() halfway through
+ *     updating the filter or the latch. Plain provide() runs on the Bridge
+ *     worker thread and would race.
  *
- *  2. The payload is a single JSON string. An earlier build sent five separate
- *     MsgPack arguments and the router logged
- *         "invalid packet, expected array, got: int8"
- *     One string has exactly one wire shape, so there is no argument-arity or
- *     integer-width mismatch to get wrong between the MCU and Python.
+ *  2. The payload is ONE JSON string, so there is exactly one wire shape. An
+ *     earlier build passed several MsgPack arguments and the router logged
+ *     "invalid packet, expected array, got: int8".
+ *
+ *  3. RPCLite's DEFAULT_RPC_BUFFER_SIZE is DECODER_BUFFER_SIZE/4 = 256 bytes,
+ *     including framing. The keys below are short on purpose: the worst-case
+ *     payload is about 170 bytes, which leaves real headroom.
  */
 #include <Arduino.h>
 #include <Arduino_RouterBridge.h>
 #include <stdio.h>
 
+/* Not commissioned yet. Do not set to 1 without physical sign-off: the servo
+ * needs its own 5 V supply, a common ground and a clear arc to swing through. */
 #define ENABLE_SERVO 0
-#define ENABLE_BUZZER_DRIVER 0
-#define ENABLE_DC_MOTOR 0
-#define ENABLE_STEPPER 0
 
+static const uint8_t BUTTON_PIN = D2;
+static const uint8_t LED_GREEN_PIN = D3;
+static const uint8_t LED_YELLOW_PIN = D4;
+static const uint8_t LED_RED_PIN = D5;
 static const uint8_t TRIG_PIN = D6;
 static const uint8_t ECHO_PIN = D7;
-
-/* On-board RGB LED3 is active-low: LOW turns a channel ON. */
-static const uint8_t LED_R = LED_BUILTIN;
-static const uint8_t LED_G = LED_BUILTIN + 1;
-static const uint8_t LED_B = LED_BUILTIN + 2;
+static const uint8_t PIR_PIN = D8;
+static const uint8_t SERVO_PIN = D9;
+static const uint8_t VIB_PIN = D10;
 
 /* Demonstration boundaries. Tabletop values, not aviation standards. */
 static const int CRITICAL_MM = 200;   // <= 20 cm -> HOLD, latching
-static const int CAUTION_MM  = 500;   // 20-50 cm -> CAUTION
-static const int RELEASE_MM  = 500;   // reset only accepted beyond this
-static const int MIN_VALID_MM = 20;   // below this the HC-SR04 is not trustworthy
+static const int CAUTION_MM = 500;    // 20-50 cm -> CAUTION
+static const int RELEASE_MM = 500;    // reset only accepted beyond this
+static const int MIN_VALID_MM = 20;
 static const int MAX_VALID_MM = 4000;
 
 static const unsigned long SAMPLE_MS = 100;                  // ~10 Hz
-static const unsigned long ECHO_START_TIMEOUT_US = 30000UL;  // wait for rising edge
-static const unsigned long ECHO_HIGH_TIMEOUT_US = 25000UL;   // ~4.3 m ceiling
-static const unsigned long RELEASE_STABLE_MS = 2000;         // stable safe time
-static const unsigned long LINK_TIMEOUT_MS = 1500;           // Linux watchdog
+static const unsigned long ECHO_START_TIMEOUT_US = 30000UL;
+static const unsigned long ECHO_HIGH_TIMEOUT_US = 25000UL;
+static const unsigned long RELEASE_STABLE_MS = 2000;
+static const unsigned long LINK_TIMEOUT_MS = 1500;
 
+/* HC-SR501 needs time to settle after power-up or its output floats and would
+ * look like a stream of intrusions. Readings are ignored until this expires. */
+static const unsigned long PIR_WARMUP_MS = 30000UL;
+/* Hold a motion indication briefly so a 10 Hz poll cannot miss a short pulse. */
+static const unsigned long PIR_STRETCH_MS = 1200UL;
+
+/* SW-420 polarity is learned, not assumed: modules ship in both senses. The
+ * level seen throughout this window with the board at rest becomes "idle". */
+static const unsigned long VIB_CAL_MS = 3000UL;
+/* Ignore further edges inside this window so one tap is one event. */
+static const unsigned long VIB_DEBOUNCE_MS = 400UL;
+
+static const uint8_t LEVEL_SAFE = 0;
+static const uint8_t LEVEL_CAUTION = 1;
+static const uint8_t LEVEL_HOLD = 2;
+static const uint8_t LEVEL_UNKNOWN = 3;
+
+/* ---------------- range ---------------- */
 unsigned long sequenceNo = 0;
 unsigned long lastSampleMs = 0;
 unsigned long sampledMs = 0;
-unsigned long lastCommandMs = 0;
 unsigned long safeSinceMs = 0;
-
-int rawMm = -1;        // last single ping, -1 = no echo
-int filteredMm = -1;   // median-of-3 then light EMA, -1 = invalid
+int rawMm = -1;
+int filteredMm = -1;
 bool rangeValid = false;
-bool holdLatched = false;   // starts false; status is UNKNOWN until a real read
-bool haveCommand = false;
-int remoteLevel = 0;
-
 static int history[3] = { -1, -1, -1 };
 static uint8_t historyCount = 0;
 static float ema = 0.0f;
 static bool emaReady = false;
 
-void setColour(bool red, bool green, bool blue) {
-  digitalWrite(LED_R, red ? LOW : HIGH);
-  digitalWrite(LED_G, green ? LOW : HIGH);
-  digitalWrite(LED_B, blue ? LOW : HIGH);
+/* ---------------- link / latch ---------------- */
+unsigned long lastCommandMs = 0;
+bool haveCommand = false;
+bool holdLatched = false;      // starts false; state is UNKNOWN until a real read
+uint8_t remoteLevel = LEVEL_UNKNOWN;
+
+/* ---------------- PIR ---------------- */
+bool pirMotion = false;
+unsigned long pirLastTriggerMs = 0;
+bool pirEverTriggered = false;
+
+/* ---------------- vibration ---------------- */
+bool vibCalibrated = false;
+int vibIdleLevel = HIGH;        // learned during VIB_CAL_MS
+bool vibActive = false;         // instantaneous, debounced
+bool vibEvent = false;          // latched edge, cleared once Linux has read it
+unsigned long vibLastTriggerMs = 0;
+unsigned long vibLastEdgeMs = 0;
+bool vibEverTriggered = false;
+
+/* ---------------- button ---------------- */
+bool buttonRequest = false;     // latched press, cleared when Linux acts on it
+bool buttonPrev = true;         // INPUT_PULLUP idles HIGH
+
+/* ---------------- outputs ---------------- */
+bool ledGreen = false, ledYellow = false, ledRed = false;
+bool ledSelfTestDone = false;   // reported so the dashboard knows the lamp test ran
+
+void writeLeds(bool g, bool y, bool r) {
+  ledGreen = g;
+  ledYellow = y;
+  ledRed = r;
+  digitalWrite(LED_GREEN_PIN, g ? HIGH : LOW);
+  digitalWrite(LED_YELLOW_PIN, y ? HIGH : LOW);
+  digitalWrite(LED_RED_PIN, r ? HIGH : LOW);
 }
 
-/* True when Linux has stopped talking to us. Independent of the sensor. */
 bool linkExpired() {
   return !haveCommand ||
          (unsigned long)(millis() - lastCommandMs) > LINK_TIMEOUT_MS;
 }
 
-/* One HC-SR04 ping. Returns echo width in microseconds, or 0 for no echo.
- * Both waits are bounded, so this can never hang the MCU: worst case is
- * ECHO_START_TIMEOUT_US, i.e. 30 ms.
- */
+bool pirWarming() { return millis() < PIR_WARMUP_MS; }
+
+/* ------------------------------------------------------------------ */
+/* HC-SR04                                                             */
+/* ------------------------------------------------------------------ */
+
+/* One ping. Returns echo width in microseconds, or 0 for no echo. Both waits
+ * are bounded, so a missing or stuck Echo line can never hang the MCU:
+ * worst case is ECHO_START_TIMEOUT_US, i.e. 30 ms. */
 unsigned long pingEchoUs() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(4);
   digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);   // standard 10 us trigger pulse
+  delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
   unsigned long t0 = micros();
@@ -123,7 +179,7 @@ static int median3(int a, int b, int c) {
 
 void sampleRange() {
   unsigned long us = pingEchoUs();
-  /* Speed of sound 343 m/s, round trip halved: mm = us * 343 / 2000. */
+  /* 343 m/s, round trip halved: mm = us * 343 / 2000. */
   int measured = us ? (int)((us * 343UL) / 2000UL) : -1;
   bool ok = (measured >= MIN_VALID_MM && measured <= MAX_VALID_MM);
   sequenceNo++;
@@ -131,9 +187,8 @@ void sampleRange() {
   rawMm = ok ? measured : -1;
 
   if (!ok) {
-    /* A timeout means UNKNOWN range. It is never reported as 0 cm and never
-     * as a safe distance. The filter is reset so a stale value cannot leak
-     * back out once echoes return. */
+    /* No echo is UNKNOWN range: never 0 cm, never safe. Clearing the filter
+     * stops a stale value leaking back out once echoes return. */
     historyCount = 0;
     emaReady = false;
     rangeValid = false;
@@ -154,14 +209,13 @@ void sampleRange() {
     ema = (float)stable;
     emaReady = true;
   } else {
-    ema += 0.5f * ((float)stable - ema);   // light smoothing only, no invention
+    ema += 0.5f * ((float)stable - ema);   // light smoothing only
   }
   filteredMm = (int)(ema + 0.5f);
   rangeValid = true;
 
-  if (filteredMm <= CRITICAL_MM) holdLatched = true;  // latch, never self-clears
+  if (filteredMm <= CRITICAL_MM) holdLatched = true;   // latch, never self-clears
 
-  /* Track how long we have been continuously safe, for the release gate. */
   if (filteredMm > RELEASE_MM) {
     if (safeSinceMs == 0) safeSinceMs = sampledMs;
   } else {
@@ -169,72 +223,233 @@ void sampleRange() {
   }
 }
 
-/* Local hazard level from the MCU's own view, independent of Linux. */
-int localLevel() {
-  if (!rangeValid) return 2;                     // unknown is never "clear"
-  if (filteredMm <= CRITICAL_MM) return 2;
-  if (filteredMm <= CAUTION_MM) return 1;
-  return 0;
+/* ------------------------------------------------------------------ */
+/* HC-SR501                                                            */
+/* ------------------------------------------------------------------ */
+
+void samplePir() {
+  if (pirWarming()) {
+    pirMotion = false;
+    return;
+  }
+  if (digitalRead(PIR_PIN) == HIGH) {
+    pirMotion = true;
+    pirLastTriggerMs = millis();
+    pirEverTriggered = true;
+  } else if ((unsigned long)(millis() - pirLastTriggerMs) > PIR_STRETCH_MS) {
+    pirMotion = false;
+  }
 }
 
-/* Linux -> MCU. Runs in loop context because it is bound with provide_safe. */
+/* ------------------------------------------------------------------ */
+/* SW-420                                                              */
+/* ------------------------------------------------------------------ */
+
+void sampleVibration() {
+  int level = digitalRead(VIB_PIN);
+  unsigned long now = millis();
+
+  if (!vibCalibrated) {
+    /* Learn the resting level. Any change restarts the window, so a board that
+     * is being knocked about during boot simply stays uncalibrated rather than
+     * learning the wrong polarity. */
+    static unsigned long calStart = 0;
+    static int calLevel = -1;
+    if (calLevel != level) {
+      calLevel = level;
+      calStart = now;
+    }
+    if (calStart != 0 && (unsigned long)(now - calStart) >= VIB_CAL_MS) {
+      vibIdleLevel = level;
+      vibCalibrated = true;
+    }
+    vibActive = false;
+    return;
+  }
+
+  bool triggered = (level != vibIdleLevel);
+  if (triggered) {
+    if (!vibActive && (unsigned long)(now - vibLastEdgeMs) > VIB_DEBOUNCE_MS) {
+      /* Rising edge of a distinct disturbance. Latch it for Linux to log once. */
+      vibEvent = true;
+      vibLastTriggerMs = now;
+      vibEverTriggered = true;
+      vibLastEdgeMs = now;
+    }
+    vibActive = true;
+  } else if ((unsigned long)(now - vibLastEdgeMs) > VIB_DEBOUNCE_MS) {
+    vibActive = false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Button                                                              */
+/* ------------------------------------------------------------------ */
+
+void sampleButton() {
+  bool pressed = (digitalRead(BUTTON_PIN) == LOW);   // INPUT_PULLUP
+  if (pressed && !buttonPrev) buttonRequest = true;  // latch the falling edge
+  buttonPrev = pressed;
+}
+
+/* ------------------------------------------------------------------ */
+/* Local safety level, computed without Linux                          */
+/* ------------------------------------------------------------------ */
+
+uint8_t localLevel() {
+  if (!rangeValid) return LEVEL_UNKNOWN;
+  if (filteredMm <= CRITICAL_MM) return LEVEL_HOLD;
+  if (filteredMm <= CAUTION_MM) return LEVEL_CAUTION;
+  return LEVEL_SAFE;
+}
+
+/* ------------------------------------------------------------------ */
+/* RPC                                                                 */
+/* ------------------------------------------------------------------ */
+
+/* Linux -> MCU. Runs in loop context (provide_safe), so it cannot race loop(). */
 bool apply_command(int level, bool release) {
-  remoteLevel = constrain(level, 0, 2);
+  remoteLevel = (uint8_t)constrain(level, 0, 3);
   lastCommandMs = millis();
   haveCommand = true;
 
-  if (remoteLevel >= 2 || localLevel() >= 2) holdLatched = true;
+  /* Linux has now seen these, so stop re-reporting them. */
+  buttonRequest = false;
+  vibEvent = false;
+
+  if (remoteLevel == LEVEL_HOLD || localLevel() == LEVEL_HOLD) holdLatched = true;
 
   bool stable = safeSinceMs != 0 &&
                 (unsigned long)(millis() - safeSinceMs) >= RELEASE_STABLE_MS;
 
-  /* Explicit operator reset only, and only when the MCU independently agrees
-   * the zone has been quiet at a safe distance for RELEASE_STABLE_MS. */
+  /* Explicit operator reset only, and only when the MCU independently agrees.
+   * Linux cannot talk the MCU into an unsafe release. */
   if (release && rangeValid && filteredMm > RELEASE_MM &&
-      localLevel() == 0 && stable) {
+      localLevel() == LEVEL_SAFE && stable) {
     holdLatched = false;
-    remoteLevel = 0;
+    remoteLevel = LEVEL_SAFE;
   }
-  return holdLatched;  // logic state, NOT physical barrier feedback
+  return holdLatched;   // logic state, NOT physical barrier feedback
 }
 
-/* MCU -> Linux. One JSON string: exactly one wire shape, nothing to mismatch. */
+/* MCU -> Linux. Short keys keep the worst case near 170 bytes, well inside the
+ * 256-byte RPC buffer.
+ *
+ *   s  sample sequence      t  MCU millis at sample   a  age of that sample, ms
+ *   d  filtered range mm    w  raw range mm           v  range valid
+ *   h  HOLD latched         l  MCU-local level        x  Linux link expired
+ *   p  PIR motion           pw PIR still warming      pt ms since PIR trigger
+ *   b  vibration active     be latched vib event      bt ms since vib trigger
+ *   bc vibration calibrated bi learned idle level
+ *   g/y/r commanded LEDs    bq button release request sv servo enabled
+ *   st  LED lamp test completed at power-on
+ */
 String read_sensors() {
-  char out[240];
+  char out[248];
+  unsigned long now = millis();
+  unsigned long pirAge = pirEverTriggered ? (now - pirLastTriggerMs) : 999999UL;
+  unsigned long vibAge = vibEverTriggered ? (now - vibLastTriggerMs) : 999999UL;
+  if (pirAge > 999999UL) pirAge = 999999UL;
+  if (vibAge > 999999UL) vibAge = 999999UL;
+
   snprintf(out, sizeof(out),
-    "{\"seq\":%lu,\"ms\":%lu,\"age_ms\":%lu,\"mm\":%d,\"raw_mm\":%d,"
-    "\"valid\":%s,\"held\":%s,\"level\":%d,\"link_lost\":%s,"
-    "\"servo_enabled\":%s}",
-    sequenceNo, sampledMs, (unsigned long)(millis() - sampledMs),
-    filteredMm, rawMm,
-    rangeValid ? "true" : "false",
-    holdLatched ? "true" : "false",
-    localLevel(),
-    linkExpired() ? "true" : "false",
-    ENABLE_SERVO ? "true" : "false");
+    "{\"s\":%lu,\"t\":%lu,\"a\":%lu,\"d\":%d,\"w\":%d,\"v\":%d,\"h\":%d,"
+    "\"l\":%d,\"x\":%d,\"p\":%d,\"pw\":%d,\"pt\":%lu,\"b\":%d,\"be\":%d,"
+    "\"bt\":%lu,\"bc\":%d,\"bi\":%d,\"g\":%d,\"y\":%d,\"r\":%d,\"bq\":%d,"
+    "\"sv\":%d,\"st\":%d}",
+    sequenceNo, sampledMs, (unsigned long)(now - sampledMs),
+    filteredMm, rawMm, rangeValid ? 1 : 0, holdLatched ? 1 : 0,
+    (int)localLevel(), linkExpired() ? 1 : 0,
+    pirMotion ? 1 : 0, pirWarming() ? 1 : 0, pirAge,
+    vibActive ? 1 : 0, vibEvent ? 1 : 0, vibAge,
+    vibCalibrated ? 1 : 0, vibIdleLevel == HIGH ? 1 : 0,
+    ledGreen ? 1 : 0, ledYellow ? 1 : 0, ledRed ? 1 : 0,
+    buttonRequest ? 1 : 0, ENABLE_SERVO ? 1 : 0,
+    ledSelfTestDone ? 1 : 0);
   return String(out);
 }
 
-void updateLed() {
-  /* The watchdog is the reason this is not simply a function of holdLatched:
-   * if Linux stops talking, the MCU latches HOLD on its own. */
+/* ------------------------------------------------------------------ */
+/* Outputs                                                             */
+/* ------------------------------------------------------------------ */
+
+void updateOutputs() {
+  /* The MCU latches HOLD by itself if Linux goes quiet. The watchdog is why
+   * this is not simply a function of the level Linux last sent. */
   if (linkExpired() && haveCommand) holdLatched = true;
 
-  if (holdLatched) setColour(true, false, false);                  // red
-  else if (!rangeValid) setColour(false, false, true);             // blue: no echo
-  else if (localLevel() == 1 || remoteLevel == 1)
-    setColour(true, true, false);                                  // amber
-  else setColour(false, true, false);                              // green
+  uint8_t local = localLevel();
+  /* Take the more pessimistic of the fused level from Linux and what this MCU
+   * can see on its own, so the LEDs can never show green while the MCU itself
+   * is looking at a hazard. UNKNOWN (3) outranks everything. */
+  uint8_t effective = remoteLevel;
+  if (local == LEVEL_UNKNOWN || effective == LEVEL_UNKNOWN) {
+    effective = LEVEL_UNKNOWN;
+  } else if (local > effective) {
+    effective = local;
+  }
+  if (holdLatched) effective = LEVEL_HOLD;
+
+  bool fault = linkExpired() || effective == LEVEL_UNKNOWN;
+
+  if (fault) {
+    /* Alternating red/yellow, never green. Non-blocking: no delay() here, so
+     * the sensor loop and the safe RPC handlers keep running. */
+    bool phase = ((millis() / 400UL) % 2UL) == 0;
+    writeLeds(false, phase, !phase);
+    return;
+  }
+
+  switch (effective) {
+    case LEVEL_SAFE:    writeLeds(true, false, false); break;
+    case LEVEL_CAUTION: writeLeds(false, true, false); break;
+    default:            writeLeds(false, false, true); break;
+  }
+
+#if ENABLE_SERVO
+  /* Deliberately not implemented until the servo is physically commissioned.
+   * A servo command is not evidence of a barrier position: there is no
+   * position feedback anywhere in this build. */
+#endif
 }
+
+/* ------------------------------------------------------------------ */
 
 void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   digitalWrite(TRIG_PIN, LOW);
   pinMode(ECHO_PIN, INPUT);
-  pinMode(LED_R, OUTPUT);
-  pinMode(LED_G, OUTPUT);
-  pinMode(LED_B, OUTPUT);
-  setColour(false, false, true);   // blue until the first valid reading
+  /* Pulled down, not floating. If a sensor is not yet wired the pin reads a
+   * steady LOW, which means "no motion" / "no vibration" instead of picking up
+   * noise and inventing an intrusion. Both modules drive their output
+   * push-pull, so the pulldown does not fight them once they are connected. */
+  pinMode(PIR_PIN, INPUT_PULLDOWN);
+  pinMode(VIB_PIN, INPUT_PULLDOWN);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  pinMode(LED_GREEN_PIN, OUTPUT);
+  pinMode(LED_YELLOW_PIN, OUTPUT);
+  pinMode(LED_RED_PIN, OUTPUT);
+
+  /* Power-on lamp test: each LED alone, in order, so a dead lamp or a swapped
+   * pair is obvious before anyone trusts the colours. A blocking delay() is
+   * acceptable here and ONLY here: setup() runs once, before Bridge.begin(),
+   * so nothing is waiting on us. The runtime loop never blocks. */
+  writeLeds(true, false, false);
+  delay(500);
+  writeLeds(false, true, false);
+  delay(500);
+  writeLeds(false, false, true);
+  delay(500);
+
+  /* Then straight into the UNKNOWN indication. Never green: nothing has been
+   * measured yet, so claiming SAFE would be a lie the operator can see. */
+  writeLeds(false, true, false);
+  ledSelfTestDone = true;
+
+#if ENABLE_SERVO
+  pinMode(SERVO_PIN, OUTPUT);
+#endif
 
   Bridge.begin();
   Bridge.provide_safe("read_sensors", read_sensors);
@@ -246,7 +461,12 @@ void loop() {
   if ((unsigned long)(now - lastSampleMs) >= SAMPLE_MS) {
     lastSampleMs = now;
     sampleRange();
+    samplePir();
   }
-  updateLed();
+  /* Vibration and the button are edge-sensitive, so they are polled every pass
+   * rather than at the 10 Hz sensor cadence. */
+  sampleVibration();
+  sampleButton();
+  updateOutputs();
   /* Return promptly so __loopHook() can run the queued safe RPC handlers. */
 }

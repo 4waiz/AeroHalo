@@ -46,7 +46,7 @@ export async function pollState(timeoutMs = 2000): Promise<LivePollResult> {
       state.telemetry_age_s === null ? Infinity : state.telemetry_age_s * 1000;
 
     let link: LivePollResult["link"];
-    if (!state.connected || ageMs >= OFFLINE_AFTER_MS) link = "offline";
+    if (!state.hardware_connected || ageMs >= OFFLINE_AFTER_MS) link = "offline";
     else if (ageMs >= STALE_AFTER_MS) link = "stale";
     else link = "online";
 
@@ -75,11 +75,7 @@ export async function fetchEvents(
   }
 }
 
-export type UnoQCommand =
-  | "hold"
-  | "clear_after_inspection"
-  | "engine_on"
-  | "engine_off";
+export type UnoQCommand = "hold" | "clear_after_inspection";
 
 export interface CommandResult {
   ok: boolean;

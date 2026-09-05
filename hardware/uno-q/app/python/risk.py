@@ -1,7 +1,12 @@
-"""Hardware-independent one-dimensional risk logic; unit-testable off the board.
+"""AeroHalo sensor fusion and risk logic.
 
-Nothing in this module invents a measurement. Every function either works from
-a real sample or reports that it cannot.
+Hardware-independent and unit-testable off the board. Nothing here invents a
+measurement: every function either works from a real sample or reports that it
+could not.
+
+There is exactly ONE risk engine. The MCU drives the LEDs from the level this
+produces, and the dashboard renders the same score and the same reasons, so the
+lights on the table and the numbers on the screen can never disagree.
 """
 from collections import deque
 import math
@@ -12,14 +17,28 @@ from config import (
     MIN_APPROACH_MM_S,
     PREDICT_CAUTION_S,
     PREDICT_HOLD_S,
+    RISK_CRITICAL_RANGE,
+    RISK_PIR,
+    RISK_PREDICT_CAUTION,
+    RISK_PREDICT_HOLD,
+    RISK_PROXIMITY_CAUTION,
+    RISK_VIBRATION,
+    BAND_CAUTION,
+    BAND_HOLD,
 )
+
+# Levels shared with the MCU. Keep in step with sketch.ino.
+LEVEL_SAFE = 0
+LEVEL_CAUTION = 1
+LEVEL_HOLD = 2
+LEVEL_UNKNOWN = 3
 
 
 class RangeTracker:
     """Least-squares closing speed over a short window of real samples.
 
-    Timestamps come from the MCU's own millis() clock, not from the host's
-    receive time, so speed is not distorted by Linux scheduling or HTTP jitter.
+    Timestamps come from the MCU's own millis() clock, not host receive time,
+    so speed is not distorted by Linux scheduling or HTTP jitter.
     """
 
     def __init__(self):
@@ -32,13 +51,12 @@ class RangeTracker:
 
     def update(self, seq, sampled_ms, distance_mm, valid):
         if not valid:
-            # An invalid reading invalidates the whole window: extrapolating
-            # across a dropout would manufacture a closing speed.
+            # Extrapolating across a dropout would manufacture a closing speed.
             self.clear()
             return 0.0
         if seq == self.last_seq:
-            # Duplicate sample (poll faster than the MCU updates). Reuse the
-            # existing fit rather than adding a zero-dt point.
+            # Polled faster than the MCU updates. Reuse the fit rather than
+            # adding a zero-dt point.
             return self._speed()
         self.last_seq = seq
 
@@ -47,7 +65,7 @@ class RangeTracker:
         if self.samples:
             dt = t - self.samples[-1][0]
             # Reset on reboot, millis rollover, long gaps, or physically
-            # implausible jumps (> 2 m/s of apparent motion).
+            # implausible motion (> 2 m/s).
             if dt <= 0 or dt > 0.5 or abs(d - self.samples[-1][1]) / dt > 2000:
                 self.samples.clear()
         self.samples.append((t, d))
@@ -58,7 +76,6 @@ class RangeTracker:
     def _speed(self):
         """Positive result means closing on the sensor."""
         if len(self.samples) < 4 or self.samples[-1][0] - self.samples[0][0] < 0.29:
-            # Too few points or too short a baseline to call it motion.
             return 0.0
         n = len(self.samples)
         mean_t = sum(t for t, _ in self.samples) / n
@@ -70,97 +87,134 @@ class RangeTracker:
         return max(0.0, -slope)
 
 
-#: Distance at which the safe-band risk contribution reaches zero.
-SAFE_ZERO_MM = 1500.0
+def time_to_boundary(distance_mm, closing_mm_s):
+    """Seconds until the configured critical boundary, or None.
 
-
-def _distance_risk(d_mm):
-    """Deterministic distance component of the risk score.
-
-    Piecewise linear, keyed to the configured boundaries so the bands line up
-    with the SAFE / CAUTION / HOLD the operator sees:
-
-        d  > 50 cm          ->   0 .. 25   safe, decaying to 0 at 150 cm
-        20 < d <= 50 cm     ->  25 .. 60   inside the caution boundary
-        d <= 20 cm          ->  80 .. 100  inside the critical boundary
-
-    The step from 60 to 80 at the critical boundary is deliberate: crossing it
-    is a discrete event, not a gradual one. Prediction fills the 60-80 range
-    for a target that is still outside the boundary but closing fast.
+    Only defined for a target that is outside the boundary AND closing faster
+    than the noise floor. This is time to a CONFIGURED BOUNDARY, not a time to
+    collision with anything.
     """
-    d = float(d_mm)
-    if d <= CRITICAL_MM:
-        # 20 cm -> 80, 0 cm -> 100
-        return 80.0 + 20.0 * (CRITICAL_MM - max(0.0, d)) / CRITICAL_MM
-    if d <= CAUTION_MM:
-        # 50 cm -> 25, 20 cm -> 60
-        span = CAUTION_MM - CRITICAL_MM
-        return 25.0 + 35.0 * (CAUTION_MM - d) / span
-    # 50 cm -> 25, 150 cm and beyond -> 0
-    span = SAFE_ZERO_MM - CAUTION_MM
-    return max(0.0, 25.0 * (SAFE_ZERO_MM - min(SAFE_ZERO_MM, d)) / span)
+    if distance_mm is None or distance_mm <= CRITICAL_MM:
+        return None
+    v = float(closing_mm_s)
+    if v < MIN_APPROACH_MM_S:
+        return None
+    return (float(distance_mm) - CRITICAL_MM) / v
 
 
-def assess(distance_mm, closing_mm_s, valid):
-    """Evaluate one sample.
-
-    Returns level 0 (safe), 1 (caution) or 2 (hold-worthy), a 0..100 risk
-    figure, the predicted time to the critical boundary, and human-readable
-    reasons.
-
-    `ttz_s` is the time to the CONFIGURED BOUNDARY, not a time to collision
-    with anything, and it is only defined for a target that is actually
-    closing faster than the noise floor.
-    """
+def range_assessment(distance_mm, closing_mm_s, valid):
+    """Facts about the range sensor alone. No fusion, no scoring."""
     if not valid or distance_mm is None or not math.isfinite(float(distance_mm)):
-        # No echo is UNKNOWN range: never 0 cm, never a measured hazard, and
-        # never safe. Level 0 here would tell the MCU the zone is clear.
+        # No echo is UNKNOWN range: never 0 cm, never a hazard reading, and
+        # never safe.
         return {
-            "risk": None,
-            "level": 0,
-            "unknown": True,
+            "valid": False,
+            "distance_cm": None,
             "ttz_s": None,
-            "reasons": ["No echo from HC-SR04: range unknown"],
+            "critical": False,
+            "caution": False,
         }
-
     d = float(distance_mm)
-    v = max(0.0, float(closing_mm_s))
-    ttz = None
-    if v >= MIN_APPROACH_MM_S and d > CRITICAL_MM:
-        ttz = (d - CRITICAL_MM) / v
+    ttz = time_to_boundary(d, closing_mm_s)
+    return {
+        "valid": True,
+        "distance_cm": round(d / 10.0, 1),
+        "ttz_s": ttz,
+        "critical": d <= CRITICAL_MM,
+        "caution": CRITICAL_MM < d <= CAUTION_MM,
+    }
 
-    risk = _distance_risk(d)
-    level = 0
+
+def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
+    """Combine the three sensors into one explainable safety state.
+
+    Contributions are additive and clamped, and every one of them writes a
+    human-readable reason, because the dashboard has to be able to say WHY it
+    is in the state it is in.
+
+    Returns score (0-100), level, reasons, and force_hold.
+
+    `force_hold` is a safety override that ignores the banded score entirely:
+    some conditions mean HOLD regardless of arithmetic.
+    """
+    score = 0
     reasons = []
+    force_hold = False
 
-    if d <= CRITICAL_MM:
-        level = 2
-        reasons.append("Object inside %.0f cm exclusion boundary" % (CRITICAL_MM / 10))
-    elif d <= CAUTION_MM:
-        level = 1
-        reasons.append("Object inside %.0f cm caution boundary" % (CAUTION_MM / 10))
+    # --- proximity -------------------------------------------------------
+    if rng["valid"]:
+        if rng["critical"]:
+            score += RISK_CRITICAL_RANGE
+            force_hold = True
+            reasons.append(
+                "Object inside %.0f cm exclusion boundary (%.1f cm)"
+                % (CRITICAL_MM / 10, rng["distance_cm"])
+            )
+        elif rng["caution"]:
+            score += RISK_PROXIMITY_CAUTION
+            reasons.append(
+                "Object %.1f cm from sensor, inside the %.0f cm caution boundary"
+                % (rng["distance_cm"], CAUTION_MM / 10)
+            )
 
-    # Prediction can only raise the level, never lower it.
-    if ttz is not None and ttz <= PREDICT_HOLD_S:
-        level = 2
-        risk = max(risk, 90.0)
-        reasons.append("Predicted boundary entry in %.1f s" % ttz)
-    elif ttz is not None and ttz <= PREDICT_CAUTION_S:
-        level = max(level, 1)
-        risk = max(risk, 65.0)
-        reasons.append("Predicted boundary entry in %.1f s" % ttz)
+        # --- prediction --------------------------------------------------
+        # Only the highest applicable band contributes; they do not stack.
+        ttz = rng["ttz_s"]
+        if ttz is not None:
+            if ttz <= PREDICT_HOLD_S:
+                score += RISK_PREDICT_HOLD
+                force_hold = True
+                reasons.append("Predicted boundary entry in %.1f s" % ttz)
+            elif ttz <= PREDICT_CAUTION_S:
+                score += RISK_PREDICT_CAUTION
+                reasons.append("Predicted boundary entry in %.1f s" % ttz)
+    else:
+        reasons.append("No echo from HC-SR04: range unknown")
+        if range_unknown_too_long:
+            force_hold = True
+            reasons.append("Range unknown for too long: holding")
+
+    # --- personnel -------------------------------------------------------
+    # Presence only. This sensor cannot identify anyone and we do not claim it.
+    if pir_motion:
+        score += RISK_PIR
+        reasons.append("Personnel / motion presence detected")
+
+    # --- impact ----------------------------------------------------------
+    # The concept is: possible aircraft or GSE impact -> inspection required.
+    if vibration_event:
+        score += RISK_VIBRATION
+        force_hold = True
+        reasons.append("Abnormal vibration detected: possible impact, inspection required")
+
+    score = max(0, min(100, score))
+
+    if force_hold:
+        level = LEVEL_HOLD
+    elif score >= BAND_HOLD:
+        level = LEVEL_HOLD
+    elif score >= BAND_CAUTION:
+        level = LEVEL_CAUTION
+    else:
+        level = LEVEL_SAFE
+
+    # A safe-looking score while the range sensor is blind is still not SAFE.
+    if not rng["valid"] and level == LEVEL_SAFE:
+        level = LEVEL_UNKNOWN
 
     return {
-        "risk": int(round(max(0.0, min(100.0, risk)))),
+        "score": score,
         "level": level,
-        "unknown": False,
-        "ttz_s": ttz,
         "reasons": reasons,
+        "force_hold": force_hold,
     }
 
 
 def normalize_detections(payload):
-    """Accept label->list and older label->confidence detector formats."""
+    """Accept label->list and older label->confidence detector formats.
+
+    Retained for a future camera path; nothing calls it in this build.
+    """
     result = []
     if not isinstance(payload, dict):
         return result
