@@ -203,8 +203,13 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long,
         near = rng["valid"] and (rng["caution"] or rng["critical"])
         if near:
             score += RISK_PIR_WITH_PROXIMITY
-            reasons.append(
+            # Personnel AND an object converging on the same boundary is the
+            # case this whole system exists for, so it latches rather than
+            # merely raising the score. Either one alone does not.
+            force_hold = True
+            force_reason = (
                 "Personnel present while an object is inside the boundary")
+            reasons.append(force_reason)
         else:
             score += RISK_PIR_ALONE
             reasons.append("Personnel / motion presence detected")

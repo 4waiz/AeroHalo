@@ -88,14 +88,30 @@ export function LiveStatusPanel() {
           )}
           <text
             x={CX}
-            y={CY - 8}
+            y={CY - 10}
             textAnchor="middle"
             className="tnum"
             fill={known ? "#f3f7fa" : "#5d7688"}
-            style={{ fontSize: known ? 34 : 15, fontWeight: 700 }}
+            style={{ fontSize: known ? 32 : 15, fontWeight: 700 }}
           >
             {known ? Math.round(score) : "N/A"}
+            {known && (
+              <tspan style={{ fontSize: 15, fontWeight: 600 }} fill="#8fa7b8">
+                %
+              </tspan>
+            )}
           </text>
+          {known && (
+            <text
+              x={CX}
+              y={CY + 6}
+              textAnchor="middle"
+              fill="#6f8ba0"
+              style={{ fontSize: 9.5, letterSpacing: "0.12em" }}
+            >
+              RISK
+            </text>
+          )}
         </svg>
       </div>
 
@@ -145,26 +161,45 @@ function Row({ label, value, colour }: { label: string; value: string; colour?: 
   );
 }
 
+/**
+ * One sensor row: name, its own SAFE / CAUTION / HOLD chip, and the detail.
+ *
+ * The chip comes from the board, not from logic re-derived here. Each sensor
+ * carries its own severity on the same vocabulary as the fused state, so an
+ * operator can see WHICH input is driving the system rather than only the
+ * verdict.
+ */
 function Head({
   icon,
   name,
-  status,
-  colour,
+  state,
+  detail,
 }: {
   icon: React.ReactNode;
   name: string;
-  status: string;
-  colour: string;
+  state: UnoQStatus;
+  detail?: string;
 }) {
+  const c = COLOUR[state];
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c4d8e5]">
-        <span className="text-[#7d97ab]">{icon}</span>
-        {name}
-      </span>
-      <span className="text-[10px] font-bold tracking-[0.05em]" style={{ color: colour }}>
-        {status}
-      </span>
+    <div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#c4d8e5]">
+          <span className="text-[#7d97ab]">{icon}</span>
+          {name}
+        </span>
+        <span
+          className="rounded-[3px] px-1.5 py-[1px] text-[9.5px] font-bold tracking-[0.07em]"
+          style={{ color: c, background: `${c}1f`, border: `1px solid ${c}55` }}
+        >
+          {state}
+        </span>
+      </div>
+      {detail && (
+        <div className="mt-0.5 text-[9.5px] leading-[1.35] text-[#6f8ba0]">
+          {detail}
+        </div>
+      )}
     </div>
   );
 }
@@ -181,31 +216,8 @@ export function LiveSensorsPanel() {
   const closing = valid ? (rng?.closing_cm_s ?? null) : null;
   const ttz = valid ? (rng?.time_to_boundary_s ?? null) : null;
 
-  const rangeS = offline
-    ? { t: "OFFLINE", c: "#ff4343" }
-    : link === "stale"
-      ? { t: "STALE", c: "#f5a623" }
-      : valid
-        ? { t: "ONLINE", c: "#31d17c" }
-        : { t: "NO ECHO", c: "#f5a623" };
-
-  const pirS = offline
-    ? { t: "OFFLINE", c: "#ff4343" }
-    : pir?.warming_up
-      ? { t: "WARMING UP", c: "#f5a623" }
-      : pir?.suspect_stuck
-        ? { t: "OUTPUT HELD", c: "#f5a623" }
-        : pir?.motion_detected
-          ? { t: "MOTION", c: "#ff4343" }
-          : { t: "CLEAR", c: "#31d17c" };
-
-  const vibS = offline
-    ? { t: "OFFLINE", c: "#ff4343" }
-    : !vib?.online
-      ? { t: "CALIBRATING", c: "#f5a623" }
-      : vib.triggered
-        ? { t: "IMPACT", c: "#ff4343" }
-        : { t: "NORMAL", c: "#31d17c" };
+  const st = (v: UnoQStatus | undefined): UnoQStatus =>
+    offline ? "UNKNOWN" : (v ?? "UNKNOWN");
 
   return (
     <Panel className="shrink-0 px-3.5 pb-3 pt-3">
@@ -222,9 +234,9 @@ export function LiveSensorsPanel() {
       <div className="mt-2">
         <Head
           icon={<Ruler size={12} strokeWidth={2} />}
-          name="HC-SR04"
-          status={rangeS.t}
-          colour={rangeS.c}
+          name="HC-SR04 proximity"
+          state={st(rng?.state)}
+          detail={offline ? "No telemetry" : rng?.detail}
         />
         <div
           className="tnum mt-1 font-bold leading-none tracking-[-0.01em]"
@@ -253,24 +265,18 @@ export function LiveSensorsPanel() {
       <div className="mt-2 border-t border-[#12293c] pt-1.5">
         <Head
           icon={<User size={12} strokeWidth={2} />}
-          name="HC-SR501"
-          status={pirS.t}
-          colour={pirS.c}
+          name="HC-SR501 personnel"
+          state={st(pir?.state)}
+          detail={offline ? "No telemetry" : pir?.detail}
         />
-        {pir?.suspect_stuck && (
-          <div className="mt-0.5 text-[9.5px] leading-[1.35] text-[#f5a623]">
-            Held {Math.round((pir.high_for_ms ?? 0) / 1000)} s by the delay
-            pot, so it no longer shows current presence. Excluded from the score.
-          </div>
-        )}
       </div>
 
       <div className="mt-1.5 border-t border-[#12293c] pt-1.5">
         <Head
           icon={<Waves size={12} strokeWidth={2} />}
-          name="SW-420"
-          status={vibS.t}
-          colour={vibS.c}
+          name="SW-420 vibration"
+          state={st(vib?.state)}
+          detail={offline ? "No telemetry" : vib?.detail}
         />
       </div>
     </Panel>

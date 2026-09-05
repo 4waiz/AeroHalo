@@ -27,6 +27,8 @@ export interface UnoQRange {
   sample_sequence: number | null;
   /** Measured, not nominal. Null until a rate has actually been observed. */
   sample_rate_hz: number | null;
+  /** Per-sensor severity, on the same vocabulary as the fused state. */
+  state: UnoQStatus;
   detail: string;
 }
 
@@ -43,6 +45,9 @@ export interface UnoQPir {
   high_for_ms: number;
   /** Output held high far longer than any real motion: module fault/setting. */
   suspect_stuck: boolean;
+  never_low: boolean;
+  /** CAUTION on motion; HOLD when an object is also inside a boundary. */
+  state: UnoQStatus;
   detail: string;
 }
 
@@ -53,6 +58,8 @@ export interface UnoQVibration {
   last_trigger_ms: number | null;
   /** "unverified" until the idle level has been learned. */
   polarity: "unverified" | "active-high" | "active-low";
+  /** CAUTION on a single knock; HOLD on a confirmed impact. */
+  state: UnoQStatus;
   detail: string;
 }
 

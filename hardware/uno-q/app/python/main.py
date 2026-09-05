@@ -65,6 +65,7 @@ state = {
         "sample_age_ms": None,
         "sample_sequence": None,
         "sample_rate_hz": None,
+        "state": "UNKNOWN",
         "detail": "Waiting for the first HC-SR04 reading",
     },
     "pir": {
@@ -78,6 +79,7 @@ state = {
         "high_for_ms": 0,
         "suspect_stuck": False,
         "never_low": False,
+        "state": "UNKNOWN",
         "detail": "Warming up",
     },
     "vibration": {
@@ -85,6 +87,7 @@ state = {
         "triggered": False,
         "last_trigger_ms": None,
         "polarity": "unverified",
+        "state": "UNKNOWN",
         "detail": "Learning idle level",
     },
     "outputs": {
@@ -121,6 +124,8 @@ last_seen_seq = None
 # Consecutive valid samples. A stray echo off an empty room is not a "track",
 # so losing it must not be treated as losing a target we were following.
 valid_run = 0
+# Last computed sample rate, held across window resets.
+last_rate_hz = None
 # Distance at the moment the track was last seen, so losing a target far away
 # is not treated the same as losing one on the boundary.
 last_valid_mm = None
@@ -195,12 +200,12 @@ def get_state():
             result["range"].update(
                 online=False, valid=False, distance_cm=None, raw_distance_cm=None,
                 closing_cm_s=None, time_to_boundary_s=None, sample_rate_hz=None,
-                detail="No telemetry from the microcontroller",
+                state="UNKNOWN", detail="No telemetry from the microcontroller",
             )
             result["pir"].update(online=False, motion_detected=False,
-                                 detail="No telemetry")
+                                 state="UNKNOWN", detail="No telemetry")
             result["vibration"].update(online=False, triggered=False,
-                                       detail="No telemetry")
+                                       state="UNKNOWN", detail="No telemetry")
             result["sensors_online"] = 0
             result["risk"] = {
                 "score": None,
@@ -265,7 +270,7 @@ def process_commands():
 def loop():
     global last_success, last_valid_at, manual_request, release_pending
     global sample_count, rate_window_start, last_seen_seq, lamp_test_pending
-    global valid_run, last_valid_mm, vib_event_times
+    global valid_run, last_valid_mm, vib_event_times, last_rate_hz
     global _last_state_key, _pir_announced, _vib_announced, _range_announced
     global _prev_pir_motion, _prev_caution, _prev_ttz_band
     global hold_since, hold_reason
@@ -455,11 +460,50 @@ def loop():
             if rate_window_start == 0.0:
                 rate_window_start = now
         elapsed = now - rate_window_start if rate_window_start else 0.0
-        rate = round(sample_count / elapsed, 1) if elapsed >= 1.0 else None
+        if elapsed >= 1.0:
+            last_rate_hz = round(sample_count / elapsed, 1)
+        # Hold the last figure across the window reset. Recomputing from zero
+        # every ten seconds made the panel blink to UNAVAILABLE for a second at
+        # a time, which reads as a fault rather than as arithmetic.
+        rate = last_rate_hz
         if elapsed > 10.0:
             sample_count, rate_window_start = 0, now
 
         state_name = LEVEL_NAME[level]
+
+        # Per-sensor severity, on the same SAFE / CAUTION / HOLD vocabulary as
+        # the fused state. Derived here rather than in the browser so there is
+        # exactly one place safety logic lives.
+        if not valid and not sensor_proven:
+            range_state = "UNKNOWN"
+        elif valid and rng["critical"]:
+            range_state = "HOLD"
+        elif valid and rng["caution"]:
+            range_state = "CAUTION"
+        else:
+            range_state = "SAFE"
+
+        # An object inside a boundary is what turns personnel presence from a
+        # note into a hazard, so the PIR escalates with the proximity it is
+        # standing next to.
+        if pir_warming or pir_suspect:
+            pir_state = "UNKNOWN"
+        elif not pir_motion:
+            pir_state = "SAFE"
+        elif range_state in ("HOLD", "CAUTION"):
+            pir_state = "HOLD"
+        else:
+            pir_state = "CAUTION"
+
+        if not vib_calibrated:
+            vib_state = "UNKNOWN"
+        elif vib_confirmed:
+            vib_state = "HOLD"
+        elif vib_active or vib_edge:
+            vib_state = "CAUTION"
+        else:
+            vib_state = "SAFE"
+
 
         # ---- one-time "online" announcements ----------------------------
         if valid and not _range_announced:
@@ -554,6 +598,7 @@ def loop():
                 sample_age_ms=int(s["a"]),
                 sample_sequence=int(s["s"]),
                 sample_rate_hz=rate,
+                state=range_state,
                 detail=(
                     "HC-SR04 on D6 / D7" if valid
                     else "No object within sensor range" if sensor_proven
@@ -571,6 +616,7 @@ def loop():
                 high_for_ms=pir_high_for,
                 suspect_stuck=pir_suspect,
                 never_low=pir_never_low,
+                state=pir_state,
                 detail=(
                     "Warming up" if pir_warming
                     else "Pin never LOW since boot: D8 may not be on the OUT pin"
@@ -584,6 +630,7 @@ def loop():
                 online=vib_calibrated,
                 triggered=vib_active or vib_edge,
                 last_trigger_ms=vib_age_ms if vib_seen else None,
+                state=vib_state,
                 polarity=(
                     "unverified" if not vib_calibrated
                     else ("active-low" if vib_idle_high else "active-high")),
@@ -600,8 +647,17 @@ def loop():
                 servo_enabled=bool(s.get("sv", 0)),
                 servo_commanded_state="disabled",
             )
+            # A latched HOLD must not read 0%. The gauge and the state are two
+            # views of the same thing, and once the interlock is set the system
+            # IS in the hold band regardless of what the sensors say right now.
+            shown_score = verdict["score"]
+            if held:
+                shown_score = max(shown_score, config.BAND_HOLD)
+
             state["risk"] = {
-                "score": verdict["score"] if rng["valid"] or pir_motion or vib_edge else None,
+                "score": shown_score if (
+                    rng["valid"] or sensor_proven or pir_motion or vib_edge or held
+                ) else None,
                 "state": state_name,
                 "reasons": reasons,
             }

@@ -103,7 +103,7 @@ check("PIR alone -> presence wording only",
 print("fuse(): personnel WITH something at the boundary is the dangerous case")
 v = fuse(rng_at(40.0), True, False, False)
 check("PIR + caution -> +30 +35", v["score"] == 65, v["score"])
-check("PIR + caution -> CAUTION", v["level"] == LEVEL_CAUTION, v)
+check("PIR + caution -> forced HOLD", v["level"] == LEVEL_HOLD and v["force_hold"], v)
 check("PIR + caution -> says why",
       any("while an object is inside" in r for r in v["reasons"]), v["reasons"])
 
