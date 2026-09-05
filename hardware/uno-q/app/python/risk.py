@@ -18,11 +18,13 @@ from config import (
     PREDICT_CAUTION_S,
     PREDICT_HOLD_S,
     RISK_CRITICAL_RANGE,
-    RISK_PIR,
+    RISK_PIR_ALONE,
+    RISK_PIR_WITH_PROXIMITY,
     RISK_PREDICT_CAUTION,
     RISK_PREDICT_HOLD,
     RISK_PROXIMITY_CAUTION,
     RISK_VIBRATION,
+    RISK_VIBRATION_SINGLE,
     BAND_CAUTION,
     BAND_HOLD,
 )
@@ -125,7 +127,8 @@ def range_assessment(distance_mm, closing_mm_s, valid):
     }
 
 
-def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
+def fuse(rng, pir_motion, vibration_event, range_unknown_too_long,
+         vibration_minor=False):
     """Combine the three sensors into one explainable safety state.
 
     Contributions are additive and clamped, and every one of them writes a
@@ -186,17 +189,35 @@ def fuse(rng, pir_motion, vibration_event, range_unknown_too_long):
 
     # --- personnel -------------------------------------------------------
     # Presence only. This sensor cannot identify anyone and we do not claim it.
+    #
+    # Weighted by context rather than flat: crew standing near a stand is the
+    # normal state of an airside, and scoring that as a caution means the system
+    # cries wolf all day and gets ignored. Personnel WHILE something is closing
+    # on the boundary is the combination worth reacting to.
     if pir_motion:
-        score += RISK_PIR
-        reasons.append("Personnel / motion presence detected")
+        near = rng["valid"] and (rng["caution"] or rng["critical"])
+        if near:
+            score += RISK_PIR_WITH_PROXIMITY
+            reasons.append(
+                "Personnel present while an object is inside the boundary")
+        else:
+            score += RISK_PIR_ALONE
+            reasons.append("Personnel / motion presence detected")
 
     # --- impact ----------------------------------------------------------
     # The concept is: possible aircraft or GSE impact -> inspection required.
+    #
+    # Only a CONFIRMED disturbance latches. A single knock on the bench is not
+    # an impact, and treating it as one left the interlock permanently red for
+    # no useful reason. A real impact rings the switch repeatedly.
     if vibration_event:
         score += RISK_VIBRATION
         force_hold = True
         force_reason = "Abnormal vibration: possible impact, inspection required"
         reasons.append(force_reason)
+    elif vibration_minor:
+        score += RISK_VIBRATION_SINGLE
+        reasons.append("Minor vibration detected (single event, not confirmed)")
 
     score = max(0, min(100, score))
 

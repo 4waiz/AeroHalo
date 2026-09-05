@@ -73,22 +73,33 @@ console.log(`Deployed ${FILES.length} files from hardware/uno-q/app`);
 
 /* ---- 3. start it ------------------------------------------------------- */
 
-// `start` on a stopped app, `restart` on a running one. Asking a stopped app to
-// restart makes App Lab flash the empty sketch first for no reason, which is
-// slower and one more chance for the SWD lines to be contended.
+// Stop, settle, then start - never `restart`.
+//
+// `arduino-app-cli app restart` flashes empty.ino and the real sketch back to
+// back, and the MCU does not reliably survive it. OpenOCD then reports
+// "target was in unknown state when halt was requested", the sketch never runs,
+// and read_sensors times out forever while Linux looks perfectly healthy -
+// which is a genuinely confusing failure to debug. Pausing between the two
+// flashes fixes it, at the cost of a few seconds.
 const listing = adb(["shell", `arduino-app-cli app list 2>/dev/null | grep aerohalo`], {
   quiet: true,
 });
-const running = (listing ?? "").includes("running");
-const verb = running ? "restart" : "start";
 
-console.log(`Building and flashing on the board (${verb}). This takes 30-60 s...\n`);
+if ((listing ?? "").includes("running")) {
+  console.log("Stopping the running app and parking the MCU...");
+  spawnSync(ADB, ["shell", `arduino-app-cli app stop ${APP} >/dev/null 2>&1`], {
+    encoding: "utf8",
+  });
+  await new Promise((res) => setTimeout(res, 8000));   // let the SWD lines settle
+}
+
+console.log("Building and flashing on the board. This takes 30-60 s...\n");
 
 const r = spawnSync(
   ADB,
   [
     "shell",
-    `arduino-app-cli app ${verb} ${APP} 2>&1 | grep -E "aerohalo-flash: wrote|ERROR|Failed Upload"`,
+    `arduino-app-cli app start ${APP} 2>&1 | grep -E "aerohalo-flash: wrote|ERROR|Failed Upload"`,
   ],
   { encoding: "utf8", stdio: "inherit" }
 );
@@ -106,26 +117,32 @@ if (r.status !== 0) {
 adb(["forward", "tcp:7000", "tcp:7000"], { quiet: true });
 
 let ok = false;
-for (let i = 0; i < 15; i++) {
+for (let i = 0; i < 25; i++) {
   await new Promise((res) => setTimeout(res, 1000));
   const probe = await fetch("http://127.0.0.1:7000/api/state", {
     cache: "no-store",
   }).catch(() => null);
   if (probe?.ok) {
     const s = await probe.json();
-    console.log(
-      `\nApp serving. connected=${s.hardware_connected} ` +
-        `state=${s.risk?.state} sensors=${s.sensors_online}/${s.sensors_total}`
-    );
-    ok = true;
-    break;
+    // Wait for the MCU specifically. The Python service answers long before the
+    // microcontroller does, and reporting success on the HTTP layer alone hides
+    // exactly the failure this script exists to catch.
+    if (s.hardware_connected) {
+      console.log(
+        `\nApp serving. connected=true ` +
+          `state=${s.risk?.state} sensors=${s.sensors_online}/${s.sensors_total}`
+      );
+      ok = true;
+      break;
+    }
   }
 }
 
 if (!ok) {
   console.error(
-    "\n  Flashed, but the service is not answering on port 7000 yet.\n" +
-      "  Give it a few seconds and run `npm run unoq:token` to check again.\n"
+    "\n  Flashed, but the MCU is not answering.\n" +
+      "  Run this command once more: the stop/settle/start cycle usually\n" +
+      "  recovers a microcontroller left in a bad state.\n"
   );
   process.exit(1);
 }

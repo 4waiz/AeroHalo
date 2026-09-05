@@ -25,8 +25,20 @@ RISK_PROXIMITY_CAUTION = 30
 RISK_CRITICAL_RANGE = 60
 RISK_PREDICT_CAUTION = 25
 RISK_PREDICT_HOLD = 50
-RISK_PIR = 35
+# Personnel near an aircraft stand is NORMAL - that is where ground crew work.
+# Presence on its own is therefore informational and stays inside the SAFE band.
+# It only carries real weight when something is also approaching the boundary,
+# because personnel plus an approaching object is the combination that hurts.
+RISK_PIR_ALONE = 10
+RISK_PIR_WITH_PROXIMITY = 35
+
+# A single knock is not an impact. A real one rings the switch repeatedly, so a
+# lone event is noted and a confirmed burst is what forces the interlock.
+RISK_VIBRATION_SINGLE = 20
 RISK_VIBRATION = 55
+# Distinct vibration events within this window to count as a confirmed impact.
+VIB_CONFIRM_COUNT = 2
+VIB_CONFIRM_WINDOW_S = 2.5
 
 # --- risk bands ------------------------------------------------------------
 BAND_CAUTION = 30   # 0-29 SAFE, 30-69 CAUTION, 70-100 HOLD

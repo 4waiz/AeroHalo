@@ -91,28 +91,41 @@ v = fuse(rng_at(42.5, 14.0), False, False, False)   # ttz 1.6 s
 check("ETA 1.6 s -> forced HOLD", v["force_hold"] and v["level"] == LEVEL_HOLD, v)
 check("ETA 1.6 s -> caution+predict", v["score"] == 80, v["score"])
 
-print("fuse(): personnel")
+print("fuse(): personnel alone is normal near a stand, not a caution")
 v = fuse(rng_at(80.0), True, False, False)
-check("PIR -> +35", v["score"] == 35, v["score"])
-check("PIR -> CAUTION", v["level"] == LEVEL_CAUTION, v)
-check("PIR -> does not force HOLD", v["force_hold"] is False, v)
-check("PIR -> presence wording only",
+check("PIR alone -> +10", v["score"] == 10, v["score"])
+check("PIR alone -> stays SAFE", v["level"] == LEVEL_SAFE, v)
+check("PIR alone -> no force", v["force_hold"] is False, v)
+check("PIR alone -> presence wording only",
       any("Personnel / motion" in r for r in v["reasons"]), v["reasons"])
 
-print("fuse(): impact forces HOLD regardless of score")
+print("fuse(): personnel WITH something at the boundary is the dangerous case")
+v = fuse(rng_at(40.0), True, False, False)
+check("PIR + caution -> +30 +35", v["score"] == 65, v["score"])
+check("PIR + caution -> CAUTION", v["level"] == LEVEL_CAUTION, v)
+check("PIR + caution -> says why",
+      any("while an object is inside" in r for r in v["reasons"]), v["reasons"])
+
+print("fuse(): one knock is not an impact")
+v = fuse(rng_at(80.0), False, False, False, vibration_minor=True)
+check("single knock -> +20", v["score"] == 20, v["score"])
+check("single knock -> stays SAFE", v["level"] == LEVEL_SAFE, v)
+check("single knock -> no latch", v["force_hold"] is False, v)
+
+print("fuse(): a CONFIRMED impact forces HOLD regardless of score")
 v = fuse(rng_at(80.0), False, True, False)
-check("vibration -> forced", v["force_hold"] is True and v["level"] == LEVEL_HOLD, v)
-check("vibration -> +55", v["score"] == 55, v["score"])
-check("vibration -> inspection wording", "inspection required" in v["force_reason"], v["force_reason"])
+check("confirmed -> forced", v["force_hold"] is True and v["level"] == LEVEL_HOLD, v)
+check("confirmed -> +55", v["score"] == 55, v["score"])
+check("confirmed -> inspection wording", "inspection required" in v["force_reason"], v["force_reason"])
 
 print("fuse(): contributions add and clamp")
 v = fuse(rng_at(43.0, 14.0), True, True, False)
 check("stacked -> clamped at 100", v["score"] == 100, v["score"])
 check("stacked -> every cause listed", len(v["reasons"]) >= 3, v["reasons"])
 
-print("fuse(): a blind sensor plus personnel is still not SAFE")
+print("fuse(): a blind sensor is never reported SAFE, even when quiet")
 v = fuse(rng_at(None, valid=False), True, False, False)
-check("blind + PIR -> at least CAUTION", v["level"] in (LEVEL_CAUTION, LEVEL_HOLD), v)
+check("blind + PIR -> UNKNOWN, not SAFE", v["level"] == LEVEL_UNKNOWN, v)
 
 print("RangeTracker: speed from MCU timestamps")
 t = RangeTracker()

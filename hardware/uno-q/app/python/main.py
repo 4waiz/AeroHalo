@@ -124,6 +124,8 @@ valid_run = 0
 # Distance at the moment the track was last seen, so losing a target far away
 # is not treated the same as losing one on the boundary.
 last_valid_mm = None
+# Timestamps of recent distinct vibration edges, for burst confirmation.
+vib_event_times = []
 
 # Event de-duplication: key -> monotonic time it was last emitted.
 _event_seen = {}
@@ -263,7 +265,7 @@ def process_commands():
 def loop():
     global last_success, last_valid_at, manual_request, release_pending
     global sample_count, rate_window_start, last_seen_seq, lamp_test_pending
-    global valid_run, last_valid_mm
+    global valid_run, last_valid_mm, vib_event_times
     global _last_state_key, _pir_announced, _vib_announced, _range_announced
     global _prev_pir_motion, _prev_caution, _prev_ttz_band
     global hold_since, hold_reason
@@ -310,7 +312,11 @@ def loop():
             since_valid is not None
             and since_valid > config.INVALID_HOLD_AFTER_S
             and last_valid_mm is not None
-            and last_valid_mm <= config.CAUTION_MM
+            # Only if we lost it INSIDE the exclusion boundary. Losing sight of
+            # something at 45 cm is an ordinary dropout, not an emergency, and
+            # latching on it kept the system red on a bench where the sensor
+            # flickers constantly.
+            and last_valid_mm <= config.CRITICAL_MM
         )
 
         # ---- PIR --------------------------------------------------------
@@ -341,15 +347,28 @@ def loop():
         vib_idle_high = bool(s.get("bi", 1))
 
         # ---- fusion -----------------------------------------------------
-        # A vibration HOLD must survive the signal returning to normal, so the
+        # Confirm an impact from a BURST, not a single knock. A real strike
+        # rings the switch repeatedly; a bench bump does not, and treating one
+        # bump as an impact left the interlock permanently red.
+        if vib_edge:
+            vib_event_times.append(now)
+        vib_event_times = [
+            t for t in vib_event_times
+            if now - t <= config.VIB_CONFIRM_WINDOW_S
+        ]
+        vib_confirmed = len(vib_event_times) >= config.VIB_CONFIRM_COUNT
+        vib_minor = bool(vib_edge) and not vib_confirmed
+
+        # A confirmed vibration HOLD must survive the shaking stopping, so the
         # engine is fed the latch, not the instantaneous line level.
-        vib_forces_hold = vib_edge or (
+        vib_forces_hold = vib_confirmed or (
             state["vibration"]["triggered"] and state["hold"]["latched"]
         )
         # A stuck output is a sensor fault, not personnel. Excluded from the
         # score so it cannot hold the whole system at CAUTION indefinitely.
         verdict = fuse(rng, pir_motion and not pir_suspect,
-                       vib_forces_hold, range_unknown_too_long)
+                       vib_forces_hold, range_unknown_too_long,
+                       vibration_minor=vib_minor)
 
         level = verdict["level"]
         reasons = list(verdict["reasons"])
