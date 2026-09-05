@@ -48,17 +48,41 @@
  * needs its own 5 V supply, a common ground and a clear arc to swing through. */
 #define ENABLE_SERVO 0
 
-/* Proximity buzzer. Set to 0 to silence it without unwiring anything.
+/* Buzzer on D11. Set ENABLE_BUZZER to 0 to silence it without unwiring.
  *
- * This drives an active buzzer MODULE - the little board with three pins and a
- * transistor on it - not a bare buzzer element. A bare buzzer pulls far more
- * current than a GPIO should source and must never hang directly off a pin.
+ * ---------------------------------------------------------------------------
+ * CURRENT LIMIT - READ THIS BEFORE WIRING A BARE BUZZER
+ * ---------------------------------------------------------------------------
+ * A three-pin buzzer MODULE has its own driver transistor, so D11 only switches
+ * a base and the pin sees almost no load. Wire that straight in.
  *
- * If yours beeps continuously the moment it powers up, it is an active-low
- * module: set BUZZER_ACTIVE_HIGH to 0. Modules ship in both senses and there is
- * no way to detect which from software. */
+ * A BARE two-pin element has no driver. Connected directly between D11 and GND
+ * it pulls its full operating current THROUGH THE PIN - typically 20-30 mA,
+ * against an STM32U585 absolute maximum of 20 mA per I/O. That is at or over
+ * the limit, and over-current damage to a GPIO is cumulative and silent: the
+ * pin does not fail loudly, it just gets weaker.
+ *
+ * With a bare element you MUST put a series resistor between D11 and the
+ * buzzer. 330R holds the worst case near 10 mA, which is comfortably inside
+ * spec. 220R is louder and still acceptable. The buzzer will be quieter than
+ * it would be on 5 V through a transistor; that is the trade for not
+ * degrading the pin.
+ *
+ * BUZZER_SERIES_OHMS is documentation, not a setting - the resistor is
+ * physical. It is here so the value is recorded next to the code that assumes
+ * it.
+ * ---------------------------------------------------------------------------
+ *
+ * BUZZER_ACTIVE_HIGH: modules ship in both senses and software cannot tell
+ * which. If yours sounds continuously at power-on, set this to 0.
+ *
+ * BUZZER_PASSIVE: an ACTIVE buzzer contains its own oscillator and sounds on
+ * DC. A PASSIVE one is just a transducer and needs a square wave - on DC it
+ * only clicks. Set this to 1 to generate a tone in software. */
 #define ENABLE_BUZZER 1
 #define BUZZER_ACTIVE_HIGH 1
+#define BUZZER_PASSIVE 0
+#define BUZZER_SERIES_OHMS 330
 
 static const uint8_t BUTTON_PIN = D2;
 static const uint8_t LED_GREEN_PIN = D3;
@@ -106,6 +130,15 @@ static const uint8_t  BEEPS_HOLD = 10;
 static const unsigned long CYCLE_SAFE_MS = 60000UL;
 static const unsigned long CYCLE_CAUTION_MS = 20000UL;
 static const unsigned long CYCLE_HOLD_MS = 10000UL;
+
+/* Software tone for a PASSIVE element. ~2.7 kHz sits near the resonant peak of
+ * most small transducers, so it is loud for the current it draws.
+ *
+ * Honest limitation: this is bit-banged from the main loop, and sampleRange()
+ * can block for up to 30 ms waiting on an echo timeout. During those windows
+ * the tone stops. It warbles slightly rather than holding a clean pitch. An
+ * active buzzer avoids the problem entirely and is the better part to use. */
+static const unsigned long TONE_HALF_PERIOD_US = 185;
 
 /* HC-SR501 needs time to settle after power-up or its output floats and would
  * look like a stream of intrusions. Readings are ignored until this expires. */
@@ -214,7 +247,25 @@ void writeLeds(bool g, bool y, bool r) {
 void writeBuzzer(bool on) {
 #if ENABLE_BUZZER
   buzzerOn = on;
+#if BUZZER_PASSIVE
+  /* A passive element needs a waveform, so a "chirp" is a short burst of
+   * square wave rather than a level. Bounded at BEEP_ON_MS so it can never
+   * run away with the loop. */
+  if (on) {
+    unsigned long until = micros() + (unsigned long)BEEP_ON_MS * 1000UL;
+    while ((long)(micros() - until) < 0) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      delayMicroseconds(TONE_HALF_PERIOD_US);
+      digitalWrite(BUZZER_PIN, LOW);
+      delayMicroseconds(TONE_HALF_PERIOD_US);
+    }
+    buzzerOn = false;   // the chirp has already been emitted
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+#else
   digitalWrite(BUZZER_PIN, (on == (BUZZER_ACTIVE_HIGH != 0)) ? HIGH : LOW);
+#endif
 #else
   (void)on;
   buzzerOn = false;

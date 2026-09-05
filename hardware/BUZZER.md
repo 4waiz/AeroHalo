@@ -7,7 +7,44 @@ Status: **code deployed, not yet physically verified.** Wire it, then confirm.
 
 ---
 
-## Wiring
+## Wiring — BARE 2-PIN ELEMENT (what is on this build)
+
+A bare buzzer has no driver transistor, so it pulls its **full operating
+current through the GPIO**. That is 20–30 mA against an STM32U585 limit of
+**20 mA per pin**. It needs a series resistor. This is not optional.
+
+```
+   UNO Q D11 ──[ 330 Ω ]──┬── buzzer (+, longer leg / marked side)
+                          │
+                          └── buzzer (−) ── UNO Q GND
+```
+
+| From | Through | To |
+|---|---|---|
+| **D11** | **330 Ω** | buzzer **+** |
+| buzzer **−** | — | **GND** |
+
+330 Ω holds the worst case near **10 mA**, comfortably inside spec. **220 Ω**
+is louder and still acceptable. Anything less is not.
+
+It will be quieter than a 5 V module. That is the trade for not degrading the
+pin — and GPIO over-current damage is cumulative and silent: the pin does not
+fail loudly, it just gets weaker over time.
+
+### Active or passive?
+
+- **Active** — has its own oscillator, sounds on DC. This is what the default
+  code assumes.
+- **Passive** — just a transducer, needs a square wave. On DC it only *clicks*.
+
+If you hear faint clicks instead of beeps, yours is passive. Set
+`#define BUZZER_PASSIVE 1` in `sketch.ino` and re-run `npm run unoq:start`.
+The tone is bit-banged from the main loop, so it warbles slightly whenever the
+ultrasonic sensor is waiting on an echo timeout.
+
+---
+
+## Wiring — 3-PIN MODULE (preferred, if the kit has one)
 
 ```
                     ACTIVE BUZZER MODULE
@@ -29,22 +66,17 @@ Status: **code deployed, not yet physically verified.** Wire it, then confirm.
 | GND | `-`, `G` | UNO Q **GND** (common with everything else) |
 | I/O | `S`, `SIG`, `IN` | UNO Q **D11** |
 
-No resistor needed. The module already has the driver transistor and, on most
-boards, a base resistor.
-
-### It must be a MODULE, not a bare buzzer
+No resistor needed — the module has the driver transistor on board, so D11 only
+switches a base and the pin sees almost no load. Louder than the bare element
+too, because the buzzer runs from 5 V rather than from a current-limited pin.
 
 ```
-   MODULE  (correct)                BARE ELEMENT  (do NOT use on a GPIO)
+   MODULE                           BARE ELEMENT
 
-   small PCB, 3 pins,               2 legs, no PCB, no transistor
-   transistor + resistor            draws 30 mA or more straight
-   on board                         from the pin
+   small PCB, 3 pins,               2 legs, no PCB
+   transistor on board              needs the 330 Ω above
+   D11 switches a base              D11 carries the load
 ```
-
-A bare buzzer element pulls far more current than a GPIO should source. If all
-you have is a bare one it needs an NPN transistor and a flyback diode — do not
-hang it off the pin directly.
 
 ### 5 V part, 3.3 V signal
 
