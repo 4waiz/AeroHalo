@@ -368,13 +368,20 @@ def loop():
 
         release = False
         if release_pending:
+            # Deliberately NOT blocked on PIR motion. The operator pressing the
+            # button is themselves a person standing in front of a sensor with a
+            # 7 m, 140-degree cone, so requiring "no motion" would make the
+            # reset impossible to use - it would refuse precisely because
+            # somebody came to perform the inspection it is asking for.
+            #
+            # The conditions that DO matter are the ones the operator can
+            # actually put right: the monitored zone must be measurably clear,
+            # and nothing may still be shaking.
             blockers = []
             if not valid:
                 blockers.append("range invalid")
             elif s["d"] <= config.RELEASE_MM:
                 blockers.append("target within %.0f cm" % (config.RELEASE_MM / 10))
-            if pir_motion:
-                blockers.append("personnel motion present")
             if vib_active:
                 blockers.append("vibration still active")
             if blockers:

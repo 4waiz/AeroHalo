@@ -373,7 +373,7 @@ export function LiveOperatorPanel() {
             if (
               window.confirm(
                 "Confirm the demonstration zone has been physically inspected and is clear.\n\n" +
-                  "The MCU still refuses the release unless the range is valid and steady beyond 50 cm for 2 s, with no personnel motion and no active vibration."
+                  "The MCU still refuses the release unless the range is valid and steady beyond 50 cm for 2 s, with no active vibration."
               )
             ) {
               void send("clear_after_inspection");
